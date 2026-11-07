@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,30 +24,58 @@ import (
 
 const testNamespace = "default"
 
-// startEnv boots an API server with the CRD installed and the controller
-// running. It skips when envtest binaries are unavailable (see `make test`).
+var (
+	envOnce   sync.Once
+	envClient client.Client
+	envErr    error
+	testEnv   *envtest.Environment
+	stopMgr   context.CancelFunc
+)
+
+// TestMain stops the shared test environment after all tests have run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if stopMgr != nil {
+		stopMgr()
+	}
+	if testEnv != nil {
+		_ = testEnv.Stop()
+	}
+	os.Exit(code)
+}
+
+// startEnv returns a client for a shared API server with the CRD installed and
+// the controller running. One environment serves every test because
+// controller-runtime allows each controller name only once per process. It
+// skips when envtest binaries are unavailable (see `make test`).
 func startEnv(t *testing.T) client.Client {
 	t.Helper()
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS not set; run `make test` to include envtest")
 	}
+	envOnce.Do(func() { envClient, envErr = bootEnv() })
+	if envErr != nil {
+		t.Fatalf("starting test environment: %v", envErr)
+	}
+	return envClient
+}
 
-	env := &envtest.Environment{
+func bootEnv() (client.Client, error) {
+	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
 	}
-	cfg, err := env.Start()
+	cfg, err := testEnv.Start()
 	if err != nil {
-		t.Fatalf("starting envtest: %v", err)
+		return nil, err
 	}
-	t.Cleanup(func() { _ = env.Stop() })
 
 	scheme := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err := tremorv1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -54,7 +83,7 @@ func startEnv(t *testing.T) client.Client {
 		Metrics: metricsserver.Options{BindAddress: "0"},
 	})
 	if err != nil {
-		t.Fatalf("creating manager: %v", err)
+		return nil, err
 	}
 	r := &ChaosExperimentReconciler{
 		Client: mgr.GetClient(),
@@ -63,18 +92,14 @@ func startEnv(t *testing.T) client.Client {
 		Rand:   rand.New(rand.NewSource(1)),
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
-		t.Fatalf("setting up controller: %v", err)
+		return nil, err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	stopMgr = cancel
 	go func() { _ = mgr.Start(ctx) }()
 
-	c, err := client.New(cfg, client.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatalf("creating client: %v", err)
-	}
-	return c
+	return client.New(cfg, client.Options{Scheme: scheme})
 }
 
 // newReadyPod creates a pod and marks it Ready, standing in for the kubelet,
