@@ -2,7 +2,7 @@
 
 A chaos testing platform for Kubernetes. Declare a failure as a `ChaosExperiment`, let the Go operator inject it into your application, and get a measured **recovery time** back, with Prometheus metrics, a Grafana dashboard and a MongoDB run history.
 
-> Status: **Phase 0 (design and scaffold)**. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phase 1 (operator core)**: `PodKill` experiments run end to end with pod-level recovery time. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
@@ -27,14 +27,32 @@ flowchart LR
 
 Go operator, Kubernetes, Prometheus, Grafana, MongoDB, Docker.
 
+## Quickstart (Phase 1)
+
+Requirements: Go 1.23+, Docker, [kind](https://kind.sigs.k8s.io/), kubectl, make.
+
+```bash
+make kind-up-lite      # local cluster (kind-up for 3 nodes)
+make kind-deploy       # build image, load into kind, install CRD + operator
+kubectl apply -f config/samples/victim.yaml       # 3-replica nginx to disturb
+kubectl apply -f config/samples/pod-kill.yaml     # kill one pod
+kubectl -n demo get chaosexperiments -w           # watch Phase and Recovery(ms)
+```
+
+Try `config/samples/pod-kill-dry-run.yaml` to see which pod would be chosen without killing anything.
+To stop a running experiment: `kubectl -n demo annotate chaosexperiment kill-victim tremor.dev/abort=true`.
+
+Safety defaults: at most 50% of pods, and at least one pod is always spared. A single-replica target is refused unless `safety.allowTotalOutage: true`.
+
 ## Develop
 
 Requirements: Go 1.23+, Docker, [kind](https://kind.sigs.k8s.io/), kubectl.
 
 ```bash
-make test            # unit tests
+make test-unit       # unit tests only (envtest tests skip)
+make test            # unit + envtest controller tests (Linux/macOS/WSL2)
 make build           # builds ./bin/manager
-make kind-up         # 3-node local cluster (use kind-up-lite on low memory)
+make manifests generate   # regenerate CRD, RBAC, deepcopy after editing api/
 ```
 
 ## Docs
