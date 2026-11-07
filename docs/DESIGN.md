@@ -19,7 +19,7 @@ Make resilience testing declarative and measurable. Engineers describe a failure
 
 ## The `ChaosExperiment` API (v1alpha1, group `tremor.dev`)
 
-Sketch only; the types in Phase 1 are the source of truth and the CRD is generated from them.
+Sketch of the final shape. `api/v1alpha1` is the source of truth. Phase 1 implements `target`, `fault` (PodKill), `safety` and `recoveryTimeout`; `steadyState` and probe-based `recoveryTimeSeconds` arrive in Phase 2, where `recoveryTimeout` folds into `steadyState.timeout`.
 
 ```yaml
 apiVersion: tremor.dev/v1alpha1
@@ -48,7 +48,7 @@ status:
   injectedAt: "2026-11-08T10:00:00Z"
   recoveredAt: "2026-11-08T10:00:07Z"
   recoveryTimeSeconds: 7.0           # user-visible, probe based
-  podRecoverySeconds: 5.2            # all target pods Ready again
+  podRecoveryMillis: 5200            # all target pods Ready again (Phase 1)
   availabilityDuringFault: 0.88
   conditions: []
 ```

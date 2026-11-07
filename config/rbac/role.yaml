@@ -1,0 +1,23 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tremor-manager-role
+rules:
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments/status]
+    verbs: [get, update, patch]
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments/finalizers]
+    verbs: [update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]

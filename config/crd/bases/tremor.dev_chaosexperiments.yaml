@@ -1,0 +1,123 @@
+---
+# Mirrors controller-gen output from api/v1alpha1 (`make manifests` regenerates it).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: chaosexperiments.tremor.dev
+spec:
+  group: tremor.dev
+  names:
+    kind: ChaosExperiment
+    listKind: ChaosExperimentList
+    plural: chaosexperiments
+    singular: chaosexperiment
+    shortNames:
+      - cx
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Fault
+          type: string
+          jsonPath: .spec.fault.type
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Recovery(ms)
+          type: integer
+          jsonPath: .status.podRecoveryMillis
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: ChaosExperiment is one controlled failure and its measured outcome.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [target, fault]
+              properties:
+                target:
+                  type: object
+                  required: [selector]
+                  properties:
+                    selector:
+                      type: object
+                      minProperties: 1
+                      additionalProperties:
+                        type: string
+                fault:
+                  type: object
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [PodKill]
+                    params:
+                      type: object
+                      properties:
+                        count:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                safety:
+                  type: object
+                  properties:
+                    dryRun:
+                      type: boolean
+                    maxAffectedPercent:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      maximum: 100
+                      default: 50
+                    allowTotalOutage:
+                      type: boolean
+                recoveryTimeout:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                message:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                startedAt:
+                  type: string
+                  format: date-time
+                injectedAt:
+                  type: string
+                  format: date-time
+                recoveredAt:
+                  type: string
+                  format: date-time
+                baselineReadyPods:
+                  type: integer
+                  format: int32
+                affectedPods:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, uid]
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                podRecoveryMillis:
+                  type: integer
+                  format: int64

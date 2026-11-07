@@ -1,0 +1,14 @@
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: kill-victim
+  namespace: demo
+spec:
+  target:
+    selector:
+      app: victim
+  fault:
+    type: PodKill
+    params:
+      count: 1
+  recoveryTimeout: 120s
