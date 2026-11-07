@@ -1,0 +1,18 @@
+# Binaries and build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local env and kubeconfigs
+.env
+*.kubeconfig
+kubeconfig

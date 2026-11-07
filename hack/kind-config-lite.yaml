@@ -1,0 +1,6 @@
+# Lighter cluster for low-memory machines; node drain is limited to one worker.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker

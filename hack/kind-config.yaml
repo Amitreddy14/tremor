@@ -1,0 +1,7 @@
+# Default dev cluster: node drain experiments need more than one worker.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
