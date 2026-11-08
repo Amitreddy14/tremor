@@ -67,8 +67,23 @@ func (in *ChaosExperimentSpec) DeepCopyInto(out *ChaosExperimentSpec) {
 	in.Target.DeepCopyInto(&out.Target)
 	out.Fault = in.Fault
 	out.Safety = in.Safety
+	if in.SteadyState != nil {
+		in, out := &in.SteadyState, &out.SteadyState
+		*out = new(SteadyStateSpec)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.RecoveryTimeout != nil {
 		in, out := &in.RecoveryTimeout, &out.RecoveryTimeout
+		*out = new(metav1.Duration)
+		**out = **in
+	}
+}
+
+func (in *SteadyStateSpec) DeepCopyInto(out *SteadyStateSpec) {
+	*out = *in
+	out.HTTP = in.HTTP
+	if in.Interval != nil {
+		in, out := &in.Interval, &out.Interval
 		*out = new(metav1.Duration)
 		**out = **in
 	}
@@ -104,8 +119,17 @@ func (in *ChaosExperimentStatus) DeepCopyInto(out *ChaosExperimentStatus) {
 		*out = make([]AffectedPod, len(*in))
 		copy(*out, *in)
 	}
+	if in.PodsRecoveredAt != nil {
+		in, out := &in.PodsRecoveredAt, &out.PodsRecoveredAt
+		*out = (*in).DeepCopy()
+	}
 	if in.PodRecoveryMillis != nil {
 		in, out := &in.PodRecoveryMillis, &out.PodRecoveryMillis
+		*out = new(int64)
+		**out = **in
+	}
+	if in.UserRecoveryMillis != nil {
+		in, out := &in.UserRecoveryMillis, &out.UserRecoveryMillis
 		*out = new(int64)
 		**out = **in
 	}

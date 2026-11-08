@@ -2,7 +2,7 @@
 
 A chaos testing platform for Kubernetes. Declare a failure as a `ChaosExperiment`, let the Go operator inject it into your application, and get a measured **recovery time** back, with Prometheus metrics, a Grafana dashboard and a MongoDB run history.
 
-> Status: **Phase 1 (operator core)**: `PodKill` experiments run end to end with pod-level recovery time. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phase 2 (demo app and user-visible recovery)**: `PodKill` experiments run against a demo shop and report both pod recovery and the recovery users actually see. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
@@ -27,22 +27,40 @@ flowchart LR
 
 Go operator, Kubernetes, Prometheus, Grafana, MongoDB, Docker.
 
-## Quickstart (Phase 1)
+## Quickstart
 
 Requirements: Go 1.23+, Docker, [kind](https://kind.sigs.k8s.io/), kubectl, make.
 
 ```bash
 make kind-up-lite      # local cluster (kind-up for 3 nodes)
 make kind-deploy       # build image, load into kind, install CRD + operator
-kubectl apply -f config/samples/victim.yaml       # 3-replica nginx to disturb
-kubectl apply -f config/samples/pod-kill.yaml     # kill one pod
-kubectl -n demo get chaosexperiments -w           # watch Phase and Recovery(ms)
+make demo-deploy       # build the demo shop, deploy it with MongoDB (3 shop replicas)
+kubectl apply -f config/samples/shop-pod-kill.yaml
+kubectl -n demo get chaosexperiments -w
 ```
 
-Try `config/samples/pod-kill-dry-run.yaml` to see which pod would be chosen without killing anything.
-To stop a running experiment: `kubectl -n demo annotate chaosexperiment kill-victim tremor.dev/abort=true`.
+When the experiment reaches `Completed`:
+
+```bash
+kubectl -n demo get chaosexperiment kill-shop -o yaml   # see status
+```
+
+| Status field | Meaning |
+| --- | --- |
+| `podRecoveryMillis` | Injection until every pod was Ready again |
+| `userRecoveryMillis` | Injection until the HTTP steady-state probe was stable again; `0` if users never saw a failure |
+| `userImpacted` | Whether any probe failed after injection |
+| `probeSuccesses` / `probeFailures` | Probe counts from injection to recovery (availability = successes / total) |
+
+Pod recovery and user recovery are often very different: with three replicas behind a Service, killing one pod may cause no visible errors at all, or a brief burst while the Service drops the dead endpoint. Tremor measures both.
+
+Other samples: `pod-kill-dry-run.yaml` shows which pod would be chosen without killing anything; `pod-kill.yaml` plus `victim.yaml` run without a steady state (pod recovery only). Stop a running experiment with `kubectl -n demo annotate chaosexperiment kill-shop tremor.dev/abort=true`.
 
 Safety defaults: at most 50% of pods, and at least one pod is always spared. A single-replica target is refused unless `safety.allowTotalOutage: true`.
+
+### Demo shop
+
+`cmd/shop` is a small Go orders API backed by MongoDB (`GET /healthz`, `GET /readyz`, `POST /orders`, `GET /orders`). Readiness depends on the database, so a MongoDB outage takes shop pods out of the Service, which the dependency-outage experiment in Phase 5 will exploit.
 
 ## Develop
 

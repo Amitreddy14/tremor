@@ -1,6 +1,6 @@
 # ADR 0003: Definition of recovery time
 
-Status: accepted
+Status: accepted (clarified in Phase 2)
 
 ## Context
 "Recovery time" is ambiguous: a pod can be Ready while users still see errors, and a fault may be held for a while before being released.
@@ -15,3 +15,11 @@ Probes run every `steadyState.interval` from the operator. A run fails if recove
 
 ## Consequences
 Resolution is bounded by the probe interval (default 1 s), documented in results. Operators that cannot reach the target over HTTP fall back to pod readiness only and say so in the status.
+
+## Clarification (Phase 2)
+
+- Recovery is the moment the probe series ends in a final unbroken run of `successThreshold` passes (the threshold-th pass of that run). A service that comes back and fails again is not recovered, so flapping cannot under-report.
+- If no probe failed after injection, `userRecoveryMillis` is `0` and `userImpacted` is false: users never noticed. The experiment still waits for the pods and a stable probe run before completing.
+- `podRecoveryMillis` is recorded the first time all pods are Ready again, even if the probe is still catching up.
+- Availability is `probeSuccesses / (probeSuccesses + probeFailures)` over the window from injection to recovery.
+- Time resolution is one probe interval (1 s default).

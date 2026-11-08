@@ -28,17 +28,19 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 		return Decision{Next: PhaseBaselineCheck, Message: "checking baseline health"}
 
 	case PhaseBaselineCheck:
-		healthy := o.TotalPods > 0 && o.ReadyPods == o.TotalPods && o.TerminatingPods == 0
+		podsHealthy := o.TotalPods > 0 && o.ReadyPods == o.TotalPods && o.TerminatingPods == 0
+		healthy := podsHealthy && (!o.ProbeEnabled || o.ProbeHealthy)
 		if !healthy {
+			state := fmt.Sprintf("%d/%d pods ready", o.ReadyPods, o.TotalPods)
+			if o.ProbeEnabled {
+				state += fmt.Sprintf(", steady-state probe healthy=%t", o.ProbeHealthy)
+			}
 			if o.Now.Sub(o.StartedAt) >= c.BaselineTimeout {
-				return Decision{
-					Next:    PhaseFailed,
-					Message: fmt.Sprintf("baseline not healthy: %d/%d pods ready", o.ReadyPods, o.TotalPods),
-				}
+				return Decision{Next: PhaseFailed, Message: "baseline not healthy: " + state}
 			}
 			return Decision{
 				Next:         PhaseBaselineCheck,
-				Message:      fmt.Sprintf("waiting for healthy baseline: %d/%d pods ready", o.ReadyPods, o.TotalPods),
+				Message:      "waiting for healthy baseline: " + state,
 				RequeueAfter: baselineRetry,
 			}
 		}
@@ -55,20 +57,39 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 		if elapsed < 0 {
 			elapsed = 0
 		}
-		recovered := !o.AffectedStillPresent &&
+		podsOK := !o.AffectedStillPresent &&
 			o.TerminatingPods == 0 &&
 			o.ReadyPods == o.TotalPods &&
 			o.ReadyPods >= o.BaselineReady
-		if recovered {
-			return Decision{Next: PhaseCompleted, Message: "recovered", RecoveryTime: elapsed}
-		}
-		if elapsed >= c.RecoveryTimeout {
-			return Decision{
-				Next:    PhaseFailed,
-				Message: fmt.Sprintf("not recovered after %s: %d/%d pods ready, baseline %d", c.RecoveryTimeout, o.ReadyPods, o.TotalPods, o.BaselineReady),
+
+		var podsAt time.Time
+		var podTime time.Duration
+		if podsOK {
+			podsAt = o.PodsRecoveredAt
+			if podsAt.IsZero() {
+				podsAt = o.Now
+			}
+			if podTime = podsAt.Sub(o.InjectedAt); podTime < 0 {
+				podTime = 0
 			}
 		}
-		return Decision{Next: PhaseRecovering, Message: "waiting for recovery", RequeueAfter: recoveryPoll}
+		probeOK := !o.ProbeEnabled || o.ProbeStable
+
+		if podsOK && probeOK {
+			return Decision{Next: PhaseCompleted, Message: "recovered", RecoveryTime: podTime, PodsRecoveredAt: podsAt}
+		}
+		if elapsed >= c.RecoveryTimeout {
+			msg := fmt.Sprintf("not recovered after %s: %d/%d pods ready, baseline %d", c.RecoveryTimeout, o.ReadyPods, o.TotalPods, o.BaselineReady)
+			if o.ProbeEnabled {
+				msg += fmt.Sprintf(", steady-state stable=%t", o.ProbeStable)
+			}
+			return Decision{Next: PhaseFailed, Message: msg, RecoveryTime: podTime, PodsRecoveredAt: podsAt}
+		}
+		msg := "waiting for pods to recover"
+		if podsOK {
+			msg = "pods recovered, waiting for steady state"
+		}
+		return Decision{Next: PhaseRecovering, Message: msg, RequeueAfter: recoveryPoll, RecoveryTime: podTime, PodsRecoveredAt: podsAt}
 	}
 
 	return Decision{Next: PhaseFailed, Message: fmt.Sprintf("unknown phase %q", phase)}

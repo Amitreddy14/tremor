@@ -42,5 +42,7 @@ jobs:
           config: hack/kind-config-lite.yaml
       - name: build image and deploy operator
         run: make kind-deploy KIND_CLUSTER=tremor
-      - name: end-to-end pod kill
+      - name: deploy demo shop and MongoDB
+        run: make demo-deploy KIND_CLUSTER=tremor
+      - name: end-to-end pod kill with user-visible recovery
         run: make e2e

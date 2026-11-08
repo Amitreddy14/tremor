@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop
+  namespace: demo
+  labels:
+    app: shop
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: shop
+  template:
+    metadata:
+      labels:
+        app: shop
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: shop
+          image: tremor-shop:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MONGO_URI
+              value: mongodb://mongo.demo.svc.cluster.local:27017
+            - name: MONGO_DB
+              value: shop
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 1
+            periodSeconds: 1
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop
+  namespace: demo
+spec:
+  selector:
+    app: shop
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
