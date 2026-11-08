@@ -65,7 +65,7 @@ kind-deploy: docker-build ## Build, load into kind, and deploy the operator
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s
 
 e2e: ## Run the end-to-end script against the current cluster
-	./hack/e2e.sh
+	bash ./hack/e2e.sh
 
 undeploy: ## Remove the operator and CRD
 	kubectl delete -k config/default --ignore-not-found
