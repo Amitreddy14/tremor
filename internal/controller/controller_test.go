@@ -3,9 +3,12 @@ package controller
 import (
 	"context"
 	"math/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +23,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
+	"github.com/Amitreddy14/tremor/internal/prober"
 )
 
 const testNamespace = "default"
@@ -90,6 +94,7 @@ func bootEnv() (client.Client, error) {
 		Scheme: scheme,
 		Now:    time.Now,
 		Rand:   rand.New(rand.NewSource(1)),
+		Prober: prober.NewManager(),
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, err
@@ -252,5 +257,109 @@ func TestDryRunInjectsNothing(t *testing.T) {
 	}
 	if len(list.Items) != 3 {
 		t.Fatalf("dry run must not delete pods, got %d", len(list.Items))
+	}
+}
+
+func steadyState(url string) *tremorv1.SteadyStateSpec {
+	return &tremorv1.SteadyStateSpec{
+		HTTP:             tremorv1.HTTPProbeSpec{URL: url, ExpectStatus: 200},
+		Interval:         &metav1.Duration{Duration: 100 * time.Millisecond},
+		SuccessThreshold: 3,
+	}
+}
+
+func getExperiment(t *testing.T, c client.Client, name string) tremorv1.ChaosExperiment {
+	t.Helper()
+	var exp tremorv1.ChaosExperiment
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: name}, &exp); err != nil {
+		t.Fatal(err)
+	}
+	return exp
+}
+
+func TestSteadyStateNoUserImpact(t *testing.T) {
+	c := startEnv(t)
+	ctx := context.Background()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		newReadyPod(t, c, "calm")
+	}
+	exp := newExperiment("calm-kill", "calm")
+	exp.Spec.SteadyState = steadyState(srv.URL)
+	if err := c.Create(ctx, exp); err != nil {
+		t.Fatal(err)
+	}
+
+	eventually(t, 30*time.Second, "Recovering phase", func() bool {
+		return phaseOf(c, "calm-kill") == tremorv1.PhaseRecovering
+	})
+	newReadyPod(t, c, "calm")
+	eventually(t, 30*time.Second, "Completed phase", func() bool {
+		return phaseOf(c, "calm-kill") == tremorv1.PhaseCompleted
+	})
+
+	done := getExperiment(t, c, "calm-kill")
+	if done.Status.UserImpacted {
+		t.Error("userImpacted = true, want false")
+	}
+	if done.Status.UserRecoveryMillis == nil || *done.Status.UserRecoveryMillis != 0 {
+		t.Errorf("userRecoveryMillis = %v, want 0", done.Status.UserRecoveryMillis)
+	}
+	if done.Status.ProbeSuccesses < 3 || done.Status.ProbeFailures != 0 {
+		t.Errorf("probes = %d ok / %d failed, want >=3 ok and 0 failed", done.Status.ProbeSuccesses, done.Status.ProbeFailures)
+	}
+}
+
+func TestSteadyStateMeasuresUserImpact(t *testing.T) {
+	c := startEnv(t)
+	ctx := context.Background()
+
+	var failing atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if failing.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		newReadyPod(t, c, "hurt")
+	}
+	exp := newExperiment("hurt-kill", "hurt")
+	exp.Spec.SteadyState = steadyState(srv.URL)
+	if err := c.Create(ctx, exp); err != nil {
+		t.Fatal(err)
+	}
+
+	eventually(t, 30*time.Second, "Recovering phase", func() bool {
+		return phaseOf(c, "hurt-kill") == tremorv1.PhaseRecovering
+	})
+
+	// Simulate users seeing errors for a while after the pod kill.
+	failing.Store(true)
+	time.Sleep(800 * time.Millisecond)
+	failing.Store(false)
+	newReadyPod(t, c, "hurt")
+
+	eventually(t, 30*time.Second, "Completed phase", func() bool {
+		return phaseOf(c, "hurt-kill") == tremorv1.PhaseCompleted
+	})
+
+	done := getExperiment(t, c, "hurt-kill")
+	if !done.Status.UserImpacted {
+		t.Error("userImpacted = false, want true")
+	}
+	if done.Status.UserRecoveryMillis == nil || *done.Status.UserRecoveryMillis < 600 {
+		t.Errorf("userRecoveryMillis = %v, want >= 600", done.Status.UserRecoveryMillis)
+	}
+	if done.Status.ProbeFailures == 0 {
+		t.Error("probeFailures = 0, want > 0")
 	}
 }

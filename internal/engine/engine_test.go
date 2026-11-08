@@ -151,3 +151,67 @@ func TestIsTerminal(t *testing.T) {
 		}
 	}
 }
+
+func TestDecideWithProbe(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	cfg := Config{RecoveryTimeout: 60 * time.Second, BaselineTimeout: 30 * time.Second}
+
+	t.Run("baseline waits for probe", func(t *testing.T) {
+		d := Decide(PhaseBaselineCheck, Observation{Now: now, StartedAt: now, TotalPods: 3, ReadyPods: 3, ProbeEnabled: true}, cfg)
+		if d.Next != PhaseBaselineCheck || d.Action != ActionNone {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	t.Run("baseline proceeds when probe healthy", func(t *testing.T) {
+		d := Decide(PhaseBaselineCheck, Observation{Now: now, StartedAt: now, TotalPods: 3, ReadyPods: 3, ProbeEnabled: true, ProbeHealthy: true}, cfg)
+		if d.Next != PhaseInjecting || d.Action != ActionPlan {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	t.Run("baseline fails on timeout with probe unhealthy", func(t *testing.T) {
+		d := Decide(PhaseBaselineCheck, Observation{Now: now.Add(31 * time.Second), StartedAt: now, TotalPods: 3, ReadyPods: 3, ProbeEnabled: true}, cfg)
+		if d.Next != PhaseFailed {
+			t.Fatalf("got %+v", d)
+		}
+	})
+
+	injected := now
+	t.Run("pods recovered but probe not stable keeps waiting and records pod time", func(t *testing.T) {
+		d := Decide(PhaseRecovering, Observation{
+			Now: now.Add(4 * time.Second), InjectedAt: injected,
+			TotalPods: 3, ReadyPods: 3, BaselineReady: 3, ProbeEnabled: true,
+		}, cfg)
+		if d.Next != PhaseRecovering || d.RecoveryTime != 4*time.Second || d.PodsRecoveredAt.IsZero() {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	t.Run("probe stable later completes with earlier pod time", func(t *testing.T) {
+		d := Decide(PhaseRecovering, Observation{
+			Now: now.Add(9 * time.Second), InjectedAt: injected,
+			TotalPods: 3, ReadyPods: 3, BaselineReady: 3,
+			PodsRecoveredAt: now.Add(4 * time.Second),
+			ProbeEnabled:    true, ProbeStable: true,
+		}, cfg)
+		if d.Next != PhaseCompleted || d.RecoveryTime != 4*time.Second {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	t.Run("probe stable but pods not recovered keeps waiting", func(t *testing.T) {
+		d := Decide(PhaseRecovering, Observation{
+			Now: now.Add(3 * time.Second), InjectedAt: injected,
+			TotalPods: 2, ReadyPods: 2, BaselineReady: 3, ProbeEnabled: true, ProbeStable: true,
+		}, cfg)
+		if d.Next != PhaseRecovering || !d.PodsRecoveredAt.IsZero() {
+			t.Fatalf("got %+v", d)
+		}
+	})
+	t.Run("timeout while probe unstable fails", func(t *testing.T) {
+		d := Decide(PhaseRecovering, Observation{
+			Now: now.Add(61 * time.Second), InjectedAt: injected,
+			TotalPods: 3, ReadyPods: 3, BaselineReady: 3, ProbeEnabled: true,
+		}, cfg)
+		if d.Next != PhaseFailed {
+			t.Fatalf("got %+v", d)
+		}
+	})
+}

@@ -1,0 +1,52 @@
+# Single-replica MongoDB for the demo. Data is ephemeral (emptyDir) on purpose.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+  namespace: demo
+  labels:
+    app: mongo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7.0
+          ports:
+            - name: mongo
+              containerPort: 27017
+          readinessProbe:
+            tcpSocket: { port: mongo }
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: demo
+spec:
+  selector:
+    app: mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo

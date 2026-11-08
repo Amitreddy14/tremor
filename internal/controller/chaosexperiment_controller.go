@@ -22,6 +22,7 @@ import (
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 	"github.com/Amitreddy14/tremor/internal/engine"
 	"github.com/Amitreddy14/tremor/internal/fault"
+	"github.com/Amitreddy14/tremor/internal/prober"
 )
 
 const (
@@ -38,6 +39,8 @@ type ChaosExperimentReconciler struct {
 	Now func() time.Time
 	// Rand picks fault targets; tests may seed it.
 	Rand *rand.Rand
+	// Prober runs HTTP steady-state probes; probing is disabled when nil.
+	Prober *prober.Manager
 }
 
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments,verbs=get;list;watch;update;patch
@@ -69,6 +72,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	phase := engine.Phase(exp.Status.Phase)
 	if engine.IsTerminal(phase) {
+		r.stopProbe(&exp)
 		return ctrl.Result{}, nil
 	}
 
@@ -86,11 +90,21 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		exp.Status.StartedAt = &t
 	}
 
+	// Steady-state probing starts with the experiment so the baseline is
+	// verified and every probe between injection and recovery is captured.
+	probeCfg, threshold, probing := probeConfig(&exp)
+	probing = probing && r.Prober != nil
+	var series prober.Series
+	if probing {
+		r.Prober.Ensure(string(exp.UID), probeCfg)
+		series = r.Prober.Snapshot(string(exp.UID))
+	}
+
 	pods, err := r.listPods(ctx, &exp)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	obs := observe(&exp, pods, now)
+	obs := observe(&exp, pods, now, series, probing, threshold)
 	d := engine.Decide(phase, obs, configFrom(&exp))
 
 	switch d.Action {
@@ -114,11 +128,32 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		exp.Status.InjectedAt = &t
 	}
 
+	// Record pod-level recovery the first time pods are seen recovered, even
+	// if the steady-state probe is still catching up.
+	if !d.PodsRecoveredAt.IsZero() && exp.Status.PodRecoveryMillis == nil {
+		at := metav1.NewMicroTime(d.PodsRecoveredAt)
+		ms := d.RecoveryTime.Milliseconds()
+		exp.Status.PodsRecoveredAt = &at
+		exp.Status.PodRecoveryMillis = &ms
+	}
+
 	if d.Next == engine.PhaseCompleted && phase == engine.PhaseRecovering {
 		t := metav1.NewMicroTime(now)
-		ms := d.RecoveryTime.Milliseconds()
 		exp.Status.RecoveredAt = &t
-		exp.Status.PodRecoveryMillis = &ms
+		if probing && exp.Status.InjectedAt != nil {
+			a := prober.Analyze(series, exp.Status.InjectedAt.Time, threshold)
+			var userMs int64
+			if a.Impacted {
+				userMs = a.StableAt.Sub(exp.Status.InjectedAt.Time).Milliseconds()
+				if userMs < 0 {
+					userMs = 0
+				}
+			}
+			exp.Status.UserRecoveryMillis = &userMs
+			exp.Status.UserImpacted = a.Impacted
+			exp.Status.ProbeSuccesses = int32(a.Successes)
+			exp.Status.ProbeFailures = int32(a.Failures)
+		}
 	}
 
 	exp.Status.Phase = tremorv1.Phase(d.Next)
@@ -127,11 +162,20 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.Status().Update(ctx, &exp); err != nil {
 		return ctrl.Result{}, err
 	}
+	if engine.IsTerminal(d.Next) {
+		r.stopProbe(&exp)
+	}
 
 	if d.Next != phase {
 		lg.Info("phase changed", "experiment", req.NamespacedName, "from", phase, "to", d.Next, "message", d.Message)
 	}
 	return ctrl.Result{RequeueAfter: d.RequeueAfter}, nil
+}
+
+func (r *ChaosExperimentReconciler) stopProbe(exp *tremorv1.ChaosExperiment) {
+	if r.Prober != nil {
+		r.Prober.Stop(string(exp.UID))
+	}
 }
 
 // finalize reverts any injected fault, then releases the resource.
@@ -144,6 +188,7 @@ func (r *ChaosExperimentReconciler) finalize(ctx context.Context, exp *tremorv1.
 			return ctrl.Result{}, err
 		}
 	}
+	r.stopProbe(exp)
 	controllerutil.RemoveFinalizer(exp, finalizerName)
 	return ctrl.Result{}, r.Update(ctx, exp)
 }
@@ -153,7 +198,11 @@ func (r *ChaosExperimentReconciler) fail(ctx context.Context, exp *tremorv1.Chao
 	exp.Status.Phase = tremorv1.PhaseFailed
 	exp.Status.Message = msg
 	exp.Status.ObservedGeneration = exp.Generation
-	return ctrl.Result{}, r.Status().Update(ctx, exp)
+	err := r.Status().Update(ctx, exp)
+	if err == nil {
+		r.stopProbe(exp)
+	}
+	return ctrl.Result{}, err
 }
 
 func (r *ChaosExperimentReconciler) now() time.Time {

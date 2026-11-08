@@ -1,6 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 IMG     ?= tremor-manager:dev
+IMG_SHOP ?= tremor-shop:dev
 LDFLAGS := -X github.com/Amitreddy14/tremor/internal/version.Version=$(VERSION) \
            -X github.com/Amitreddy14/tremor/internal/version.Commit=$(COMMIT)
 
@@ -11,7 +12,7 @@ ENVTEST_K8S    ?= 1.31.0
 KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
-        kind-up kind-up-lite kind-down kind-deploy e2e undeploy
+        docker-build-shop demo-deploy demo-undeploy kind-up kind-up-lite kind-down kind-deploy e2e undeploy
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n",$$1,$$2}'
@@ -48,7 +49,19 @@ fmt-check: ## Fail if code is not gofmt-clean
 	@test -z "$$(gofmt -l .)" || (gofmt -l . && echo "run: make fmt" && exit 1)
 
 docker-build: ## Build the operator image
-	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMG) .
+	docker build --build-arg TARGET=manager --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMG) .
+
+docker-build-shop: ## Build the demo shop image
+	docker build --build-arg TARGET=shop --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMG_SHOP) .
+
+demo-deploy: docker-build-shop ## Build the shop, load into kind, deploy shop + MongoDB
+	kind load docker-image $(IMG_SHOP) --name $(KIND_CLUSTER)
+	kubectl apply -k config/demo
+	kubectl -n demo rollout status deploy/mongo --timeout=180s
+	kubectl -n demo rollout status deploy/shop --timeout=180s
+
+demo-undeploy: ## Remove the demo workload
+	kubectl delete -k config/demo --ignore-not-found
 
 kind-up: ## Create the 3-node kind cluster (1 control-plane, 2 workers)
 	kind create cluster --name $(KIND_CLUSTER) --config hack/kind-config.yaml
@@ -64,7 +77,7 @@ kind-deploy: docker-build ## Build, load into kind, and deploy the operator
 	kubectl apply -k config/default
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s
 
-e2e: ## Run the end-to-end script against the current cluster
+e2e: ## Run the end-to-end script (run demo-deploy first)
 	bash ./hack/e2e.sh
 
 undeploy: ## Remove the operator and CRD

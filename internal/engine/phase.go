@@ -55,6 +55,16 @@ type Observation struct {
 	// AffectedStillPresent is true while any pod targeted by the fault
 	// (matched by UID) still exists in the cluster.
 	AffectedStillPresent bool
+
+	// PodsRecoveredAt is when pods were first seen recovered (zero if not yet).
+	PodsRecoveredAt time.Time
+
+	// ProbeEnabled is true when the experiment has an HTTP steady state.
+	ProbeEnabled bool
+	// ProbeHealthy: the latest probes passed (baseline check).
+	ProbeHealthy bool
+	// ProbeStable: since injection the probes ended in an unbroken passing run.
+	ProbeStable bool
 }
 
 // Config carries the per-experiment knobs the state machine needs.
@@ -71,6 +81,9 @@ type Decision struct {
 	Action       Action
 	Message      string
 	RequeueAfter time.Duration
-	// RecoveryTime is set when Next is Completed after a real injection.
+	// RecoveryTime is the pod-level recovery time, set once pods have
+	// recovered (also when Next is still Recovering because probes lag).
 	RecoveryTime time.Duration
+	// PodsRecoveredAt is when pods recovered; zero until they have.
+	PodsRecoveredAt time.Time
 }

@@ -19,7 +19,7 @@ Make resilience testing declarative and measurable. Engineers describe a failure
 
 ## The `ChaosExperiment` API (v1alpha1, group `tremor.dev`)
 
-Sketch of the final shape. `api/v1alpha1` is the source of truth. Phase 1 implements `target`, `fault` (PodKill), `safety` and `recoveryTimeout`; `steadyState` and probe-based `recoveryTimeSeconds` arrive in Phase 2, where `recoveryTimeout` folds into `steadyState.timeout`.
+Sketch of the final shape. `api/v1alpha1` is the source of truth. Implemented through Phase 2: `target`, `fault` (PodKill), `safety`, `steadyState` (HTTP probe) and `recoveryTimeout`. Results are reported in milliseconds as `podRecoveryMillis` and `userRecoveryMillis`.
 
 ```yaml
 apiVersion: tremor.dev/v1alpha1
@@ -39,7 +39,7 @@ spec:
     http: { url: http://shop.demo.svc:8080/healthz, expectStatus: 200 }
     interval: 1s
     successThreshold: 3              # consecutive passes needed to count as healthy
-    timeout: 120s                    # give up waiting for recovery
+  recoveryTimeout: 120s              # give up waiting for recovery
   safety:
     dryRun: false
     maxAffectedPercent: 50
@@ -47,9 +47,11 @@ status:
   phase: Completed
   injectedAt: "2026-11-08T10:00:00Z"
   recoveredAt: "2026-11-08T10:00:07Z"
-  recoveryTimeSeconds: 7.0           # user-visible, probe based
+  userRecoveryMillis: 7000           # user-visible, probe based
+  userImpacted: true
   podRecoveryMillis: 5200            # all target pods Ready again (Phase 1)
-  availabilityDuringFault: 0.88
+  probeSuccesses: 22                 # availability = 22 / (22 + 3)
+  probeFailures: 3
   conditions: []
 ```
 

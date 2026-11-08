@@ -27,9 +27,12 @@ spec:
         - name: Phase
           type: string
           jsonPath: .status.phase
-        - name: Recovery(ms)
+        - name: PodRecovery(ms)
           type: integer
           jsonPath: .status.podRecoveryMillis
+        - name: UserRecovery(ms)
+          type: integer
+          jsonPath: .status.userRecoveryMillis
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
@@ -84,6 +87,30 @@ spec:
                       default: 50
                     allowTotalOutage:
                       type: boolean
+                steadyState:
+                  type: object
+                  required: [http]
+                  properties:
+                    http:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                          minLength: 1
+                        expectStatus:
+                          type: integer
+                          format: int32
+                          minimum: 100
+                          maximum: 599
+                          default: 200
+                    interval:
+                      type: string
+                    successThreshold:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      default: 3
                 recoveryTimeout:
                   type: string
             status:
@@ -118,6 +145,20 @@ spec:
                         type: string
                       uid:
                         type: string
+                podsRecoveredAt:
+                  type: string
+                  format: date-time
                 podRecoveryMillis:
                   type: integer
                   format: int64
+                userRecoveryMillis:
+                  type: integer
+                  format: int64
+                userImpacted:
+                  type: boolean
+                probeSuccesses:
+                  type: integer
+                  format: int32
+                probeFailures:
+                  type: integer
+                  format: int32
