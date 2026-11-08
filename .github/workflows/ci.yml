@@ -30,6 +30,18 @@ jobs:
       - name: build
         run: make build
 
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: kustomize builds
+        run: |
+          kubectl kustomize config/default > /dev/null
+          kubectl kustomize config/demo > /dev/null
+          kubectl kustomize config/monitoring > /dev/null
+      - name: dashboard is valid JSON
+        run: python3 -m json.tool config/monitoring/dashboards/tremor.json > /dev/null
+
   e2e:
     runs-on: ubuntu-latest
     needs: go
