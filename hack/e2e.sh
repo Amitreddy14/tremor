@@ -32,3 +32,24 @@ echo "user recovery: ${user_ms} ms (impacted: $(get userImpacted))"
 echo "probes: $(get probeSuccesses) ok, $(get probeFailures) failed"
 test -n "${pod_ms}"
 test -n "${user_ms}"
+
+# Metrics: the operator must expose Tremor metrics for the finished run.
+kubectl -n tremor-system port-forward deploy/tremor-manager 18080:8080 >/dev/null 2>&1 &
+pf_pid=$!
+trap 'kill "${pf_pid}" 2>/dev/null || true' EXIT
+
+metrics=""
+for _ in $(seq 1 15); do
+  if metrics=$(curl -sf http://127.0.0.1:18080/metrics); then break; fi
+  sleep 1
+done
+test -n "${metrics}"
+
+echo "--- tremor metrics ---"
+echo "${metrics}" | grep -E '^tremor_' | grep -v '_bucket' || true
+
+echo "${metrics}" | grep -E 'tremor_experiments_total\{[^}]*result="completed"[^}]*\} [1-9]'
+echo "${metrics}" | grep -E 'tremor_recovery_seconds_count\{[^}]*kind="pod"[^}]*\} [1-9]'
+echo "${metrics}" | grep -E 'tremor_recovery_seconds_count\{[^}]*kind="user"[^}]*\} [1-9]'
+echo "${metrics}" | grep -E 'tremor_last_availability_ratio\{[^}]*\} '
+echo "metrics check passed"

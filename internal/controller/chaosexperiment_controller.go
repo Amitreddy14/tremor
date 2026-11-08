@@ -22,6 +22,7 @@ import (
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 	"github.com/Amitreddy14/tremor/internal/engine"
 	"github.com/Amitreddy14/tremor/internal/fault"
+	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
 )
 
@@ -41,6 +42,8 @@ type ChaosExperimentReconciler struct {
 	Rand *rand.Rand
 	// Prober runs HTTP steady-state probes; probing is disabled when nil.
 	Prober *prober.Manager
+	// Metrics records Prometheus metrics; metrics are skipped when nil.
+	Metrics *metrics.Recorder
 }
 
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments,verbs=get;list;watch;update;patch
@@ -165,6 +168,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if engine.IsTerminal(d.Next) {
 		r.stopProbe(&exp)
 	}
+	r.recordMetrics(&exp, phase, d.Next, d.Action == engine.ActionInject, series, probing)
 
 	if d.Next != phase {
 		lg.Info("phase changed", "experiment", req.NamespacedName, "from", phase, "to", d.Next, "message", d.Message)
@@ -189,18 +193,21 @@ func (r *ChaosExperimentReconciler) finalize(ctx context.Context, exp *tremorv1.
 		}
 	}
 	r.stopProbe(exp)
+	r.Metrics.Forget(exp.Namespace, exp.Name)
 	controllerutil.RemoveFinalizer(exp, finalizerName)
 	return ctrl.Result{}, r.Update(ctx, exp)
 }
 
 // fail moves the experiment to Failed with a message.
 func (r *ChaosExperimentReconciler) fail(ctx context.Context, exp *tremorv1.ChaosExperiment, msg string) (ctrl.Result, error) {
+	from := engine.Phase(exp.Status.Phase)
 	exp.Status.Phase = tremorv1.PhaseFailed
 	exp.Status.Message = msg
 	exp.Status.ObservedGeneration = exp.Generation
 	err := r.Status().Update(ctx, exp)
 	if err == nil {
 		r.stopProbe(exp)
+		r.recordMetrics(exp, from, engine.PhaseFailed, false, nil, false)
 	}
 	return ctrl.Result{}, err
 }

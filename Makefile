@@ -12,7 +12,8 @@ ENVTEST_K8S    ?= 1.31.0
 KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
-        docker-build-shop demo-deploy demo-undeploy kind-up kind-up-lite kind-down kind-deploy e2e undeploy
+        docker-build-shop demo-deploy demo-undeploy \
+        monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy e2e undeploy
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n",$$1,$$2}'
@@ -79,6 +80,24 @@ kind-deploy: docker-build ## Build, load into kind, and deploy the operator
 
 e2e: ## Run the end-to-end script (run demo-deploy first)
 	bash ./hack/e2e.sh
+
+monitoring-up: ## Install kube-prometheus-stack (Prometheus + Grafana) into kind via Helm
+	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+	helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+		--namespace monitoring --create-namespace -f hack/kps-values.yaml --wait --timeout 10m
+
+monitoring-apply: ## Add the Tremor ServiceMonitor and Grafana dashboard
+	kubectl apply -k config/monitoring
+
+grafana: ## Open Grafana on http://localhost:3000 (admin / tremor)
+	kubectl -n monitoring port-forward svc/kps-grafana 3000:80
+
+prometheus: ## Open Prometheus on http://localhost:9090
+	kubectl -n monitoring port-forward svc/kps-prometheus 9090:9090
+
+monitoring-down: ## Remove the monitoring stack and Tremor dashboard
+	kubectl delete -k config/monitoring --ignore-not-found
+	helm uninstall kps --namespace monitoring --ignore-not-found || true
 
 undeploy: ## Remove the operator and CRD
 	kubectl delete -k config/default --ignore-not-found

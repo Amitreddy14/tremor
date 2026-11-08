@@ -1,0 +1,15 @@
+namespace: monitoring
+
+resources:
+  - servicemonitor.yaml
+
+# The kube-prometheus-stack Grafana sidecar loads every ConfigMap labelled
+# grafana_dashboard="1" as a dashboard.
+configMapGenerator:
+  - name: tremor-dashboard
+    files:
+      - tremor.json=dashboards/tremor.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"

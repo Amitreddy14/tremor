@@ -12,10 +12,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 	"github.com/Amitreddy14/tremor/internal/controller"
+	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
 	"github.com/Amitreddy14/tremor/internal/version"
 )
@@ -60,9 +62,10 @@ func main() {
 	}
 
 	if err := (&controller.ChaosExperimentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-		Prober: prober.NewManager(),
+		Client:  mgr.GetClient(),
+		Scheme:  mgr.GetScheme(),
+		Prober:  prober.NewManager(),
+		Metrics: metrics.New(ctrlmetrics.Registry),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)

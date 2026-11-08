@@ -94,13 +94,14 @@ Details and safety rules in [ADR 0005](adr/0005-fault-injection-and-safety.md).
 
 ## Observability
 
-Prometheus metrics (names fixed now, implemented in Phase 3):
+Prometheus metrics (implemented in Phase 3, listed with their meaning in the README):
 
 - `tremor_experiments_total{type,result}`
 - `tremor_faults_injected_total{type}`
-- `tremor_recovery_seconds{type}` histogram
-- `tremor_experiment_phase{experiment,phase}` gauge
-- `tremor_steady_state_ok{experiment}` gauge
+- `tremor_recovery_seconds{type,kind}` histogram, `kind` is `pod` or `user`
+- `tremor_experiment_phase{namespace,experiment,phase}` gauge
+- `tremor_steady_state_ok{namespace,experiment}` gauge
+- `tremor_last_recovery_seconds{namespace,experiment,type,kind}` and `tremor_last_availability_ratio{namespace,experiment}` gauges, kept after a run so dashboards can show the last result
 
 ## Data
 

@@ -3,6 +3,7 @@ module github.com/Amitreddy14/tremor
 go 1.23
 
 require (
+	github.com/prometheus/client_golang v1.19.1
 	go.mongodb.org/mongo-driver v1.17.1
 	k8s.io/api v0.31.4
 	k8s.io/apimachinery v0.31.4
@@ -41,7 +42,6 @@ require (
 	github.com/montanaflynn/stats v0.7.1 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/prometheus/client_golang v1.19.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect

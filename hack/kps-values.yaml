@@ -1,0 +1,31 @@
+# Lightweight kube-prometheus-stack values for a local kind cluster.
+# Local use only: the Grafana password below is not a secret.
+fullnameOverride: kps
+defaultRules:
+  create: false
+alertmanager:
+  enabled: false
+nodeExporter:
+  enabled: false
+kubeStateMetrics:
+  enabled: false
+grafana:
+  adminPassword: tremor
+  defaultDashboardsEnabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+prometheus:
+  prometheusSpec:
+    # Pick up ServiceMonitors without requiring the Helm release label.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    retention: 6h
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 900Mi

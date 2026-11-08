@@ -23,7 +23,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
+	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const testNamespace = "default"
@@ -34,6 +36,7 @@ var (
 	envErr    error
 	testEnv   *envtest.Environment
 	stopMgr   context.CancelFunc
+	testReg   = prometheus.NewRegistry()
 )
 
 // TestMain stops the shared test environment after all tests have run.
@@ -90,11 +93,12 @@ func bootEnv() (client.Client, error) {
 		return nil, err
 	}
 	r := &ChaosExperimentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: scheme,
-		Now:    time.Now,
-		Rand:   rand.New(rand.NewSource(1)),
-		Prober: prober.NewManager(),
+		Client:  mgr.GetClient(),
+		Scheme:  scheme,
+		Now:     time.Now,
+		Rand:    rand.New(rand.NewSource(1)),
+		Prober:  prober.NewManager(),
+		Metrics: metrics.New(testReg),
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, err
@@ -361,5 +365,89 @@ func TestSteadyStateMeasuresUserImpact(t *testing.T) {
 	}
 	if done.Status.ProbeFailures == 0 {
 		t.Error("probeFailures = 0, want > 0")
+	}
+}
+
+// metricSum adds up every sample of a metric family whose labels contain want.
+// Histograms contribute their observation count.
+func metricSum(name string, want map[string]string) float64 {
+	families, err := testReg.Gather()
+	if err != nil {
+		return 0
+	}
+	var total float64
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			labels := map[string]string{}
+			for _, l := range m.GetLabel() {
+				labels[l.GetName()] = l.GetValue()
+			}
+			match := true
+			for k, v := range want {
+				if labels[k] != v {
+					match = false
+				}
+			}
+			if !match {
+				continue
+			}
+			switch {
+			case m.GetCounter() != nil:
+				total += m.GetCounter().GetValue()
+			case m.GetHistogram() != nil:
+				total += float64(m.GetHistogram().GetSampleCount())
+			case m.GetGauge() != nil:
+				total += m.GetGauge().GetValue()
+			}
+		}
+	}
+	return total
+}
+
+func TestMetricsAreRecorded(t *testing.T) {
+	c := startEnv(t)
+	ctx := context.Background()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		newReadyPod(t, c, "metered")
+	}
+	exp := newExperiment("metered-kill", "metered")
+	exp.Spec.SteadyState = steadyState(srv.URL)
+	if err := c.Create(ctx, exp); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 30*time.Second, "Recovering phase", func() bool {
+		return phaseOf(c, "metered-kill") == tremorv1.PhaseRecovering
+	})
+	newReadyPod(t, c, "metered")
+	eventually(t, 30*time.Second, "Completed phase", func() bool {
+		return phaseOf(c, "metered-kill") == tremorv1.PhaseCompleted
+	})
+
+	// Metrics are recorded just after the status update, so poll briefly.
+	eventually(t, 10*time.Second, "completed experiment counter", func() bool {
+		return metricSum("tremor_experiments_total", map[string]string{"type": "PodKill", "result": "completed"}) >= 1
+	})
+	if got := metricSum("tremor_faults_injected_total", map[string]string{"type": "PodKill"}); got < 1 {
+		t.Errorf("faults injected = %v, want >= 1", got)
+	}
+	for _, kind := range []string{"pod", "user"} {
+		if got := metricSum("tremor_recovery_seconds", map[string]string{"kind": kind}); got < 1 {
+			t.Errorf("recovery histogram kind=%s has %v observations, want >= 1", kind, got)
+		}
+	}
+	if got := metricSum("tremor_last_availability_ratio", map[string]string{"experiment": "metered-kill"}); got <= 0 {
+		t.Errorf("availability = %v, want > 0", got)
+	}
+	if got := metricSum("tremor_experiment_phase", map[string]string{"experiment": "metered-kill", "phase": "Completed"}); got != 1 {
+		t.Errorf("Completed phase gauge = %v, want 1", got)
 	}
 }
