@@ -1,0 +1,19 @@
+# The operator plus a history MongoDB, with the operator pointed at it.
+# `kubectl apply -k config/history`
+namespace: tremor-system
+
+resources:
+  - ../default
+  - mongo.yaml
+
+patches:
+  - target:
+      kind: Deployment
+      name: tremor-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --history-mongo-uri=mongodb://tremor-history.tremor-system.svc.cluster.local:27017
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --cluster-name=kind

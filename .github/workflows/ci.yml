@@ -37,6 +37,7 @@ jobs:
       - name: kustomize builds
         run: |
           kubectl kustomize config/default > /dev/null
+          kubectl kustomize config/history > /dev/null
           kubectl kustomize config/demo > /dev/null
           kubectl kustomize config/monitoring > /dev/null
       - name: dashboard is valid JSON
@@ -52,9 +53,13 @@ jobs:
         with:
           cluster_name: tremor
           config: hack/kind-config-lite.yaml
-      - name: build image and deploy operator
+      - name: build image and deploy operator + history MongoDB
         run: make kind-deploy KIND_CLUSTER=tremor
       - name: deploy demo shop and MongoDB
         run: make demo-deploy KIND_CLUSTER=tremor
-      - name: end-to-end pod kill with user-visible recovery
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: end-to-end pod kill, user-visible recovery and run history
         run: make e2e

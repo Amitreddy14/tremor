@@ -53,3 +53,27 @@ echo "${metrics}" | grep -E 'tremor_recovery_seconds_count\{[^}]*kind="pod"[^}]*
 echo "${metrics}" | grep -E 'tremor_recovery_seconds_count\{[^}]*kind="user"[^}]*\} [1-9]'
 echo "${metrics}" | grep -E 'tremor_last_availability_ratio\{[^}]*\} '
 echo "metrics check passed"
+
+# History: the finished run must be saved to MongoDB and readable by tremorctl.
+kubectl -n demo wait --for=jsonpath='{.status.runRecorded}'=true chaosexperiment/kill-shop --timeout=60s
+
+kubectl -n tremor-system port-forward svc/tremor-history 27117:27017 >/dev/null 2>&1 &
+hist_pid=$!
+trap 'kill "${pf_pid}" "${hist_pid}" 2>/dev/null || true' EXIT
+sleep 3
+
+ctl() { go run ./cmd/tremorctl "$@" --mongo-uri mongodb://127.0.0.1:27117; }
+
+echo "--- tremorctl history ---"
+history_json=""
+for _ in $(seq 1 10); do
+  if history_json=$(ctl history --output json 2>/dev/null) && echo "${history_json}" | grep -q '"name": "kill-shop"'; then break; fi
+  sleep 2
+done
+echo "${history_json}" | grep -q '"name": "kill-shop"'
+echo "${history_json}" | grep -q '"result": "completed"'
+ctl history
+echo "--- tremorctl report ---"
+ctl report --since all
+ctl report --since all | grep -q 'PodKill'
+echo "history check passed"

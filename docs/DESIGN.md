@@ -15,7 +15,7 @@ Make resilience testing declarative and measurable. Engineers describe a failure
 | Dashboards | Grafana dashboard shipped as a ConfigMap |
 | Result store | MongoDB collection of finished runs (history, not source of truth) |
 | Demo app | Small Go "shop" API backed by MongoDB, used to demonstrate and test |
-| `tremorctl` | CLI that reads run history and prints reports (Phase 4) |
+| `tremorctl` | CLI that reads run history from MongoDB and prints tables and reports |
 
 ## The `ChaosExperiment` API (v1alpha1, group `tremor.dev`)
 

@@ -145,6 +145,11 @@ type ChaosExperimentStatus struct {
 	// recovery; availability during the experiment is successes over the total.
 	ProbeSuccesses int32 `json:"probeSuccesses,omitempty"`
 	ProbeFailures  int32 `json:"probeFailures,omitempty"`
+
+	// RunRecorded is true once the finished run has been saved to the history
+	// store. It makes recording happen exactly once per experiment, even across
+	// operator restarts and store outages.
+	RunRecorded bool `json:"runRecorded,omitempty"`
 }
 
 // +kubebuilder:object:root=true

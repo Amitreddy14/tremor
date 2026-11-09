@@ -7,8 +7,8 @@ Built in phases. Each phase is a branch, a PR, green CI, and a tag.
 | 0 | Design and scaffold | Design doc, ADRs, Go skeleton, Dockerfile, Makefile, kind configs, CI | Done |
 | 1 | Operator core | Kubebuilder/controller-runtime setup, `ChaosExperiment` CRD, state machine, finalizer, PodKill, envtest tests | Done |
 | 2 | Demo app and recovery measurement | Go shop API + MongoDB manifests, HTTP steady-state prober, recovery-time calculation | Done |
-| 3 | Observability | Prometheus metrics, ServiceMonitor, Grafana dashboard | Delivered, awaiting merge |
-| 4 | Result store and CLI | MongoDB run history, `tremorctl` history and report | Next |
+| 3 | Observability | Prometheus metrics, ServiceMonitor, Grafana dashboard | Done |
+| 4 | Result store and CLI | MongoDB run history, `tremorctl` history, show and report | Delivered, awaiting merge |
 | 5 | Dependency and resource faults | DependencyOutage, CPUStress, MemoryStress | |
 | 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | |
 | 7 | Safety and scheduling | Namespace allowlist, blast radius, dry-run, abort, `ChaosSchedule` | |

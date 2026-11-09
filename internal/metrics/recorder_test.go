@@ -16,6 +16,7 @@ func TestNilRecorderIsSafe(t *testing.T) {
 	r.SetSteadyState("ns", "x", true)
 	r.ClearSteadyState("ns", "x")
 	r.RecordRecovery("ns", "x", "PodKill", 1, &one, &one)
+	r.RunStoreWrite("ok")
 	r.Forget("ns", "x")
 }
 
@@ -34,6 +35,20 @@ func TestCounters(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(r.faults.WithLabelValues("PodKill")); got != 1 {
 		t.Errorf("faults = %v, want 1", got)
+	}
+}
+
+func TestRunStoreWrites(t *testing.T) {
+	r := New(prometheus.NewRegistry())
+	r.RunStoreWrite("ok")
+	r.RunStoreWrite("ok")
+	r.RunStoreWrite("error")
+
+	if got := testutil.ToFloat64(r.storeWrites.WithLabelValues("ok")); got != 2 {
+		t.Errorf("ok = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(r.storeWrites.WithLabelValues("error")); got != 1 {
+		t.Errorf("error = %v, want 1", got)
 	}
 }
 

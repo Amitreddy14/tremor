@@ -162,3 +162,8 @@ spec:
                 probeFailures:
                   type: integer
                   format: int32
+                runRecorded:
+                  description: |-
+                    RunRecorded is true once the finished run has been saved to the history
+                    store.
+                  type: boolean

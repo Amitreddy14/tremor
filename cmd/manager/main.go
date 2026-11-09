@@ -2,9 +2,11 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -19,6 +21,8 @@ import (
 	"github.com/Amitreddy14/tremor/internal/controller"
 	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
+	"github.com/Amitreddy14/tremor/internal/runstore"
+	"github.com/Amitreddy14/tremor/internal/runstore/mongostore"
 	"github.com/Amitreddy14/tremor/internal/version"
 )
 
@@ -28,11 +32,17 @@ func main() {
 		probeAddr   string
 		leaderElect bool
 		showVersion bool
+		historyURI  string
+		clusterName string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the Prometheus metrics endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe endpoint binds to")
 	flag.BoolVar(&leaderElect, "leader-elect", false, "enable leader election so only one replica is active")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.StringVar(&historyURI, "history-mongo-uri", os.Getenv("TREMOR_HISTORY_MONGO_URI"),
+		"MongoDB URI for run history (default $TREMOR_HISTORY_MONGO_URI); history is disabled when empty")
+	flag.StringVar(&clusterName, "cluster-name", os.Getenv("TREMOR_CLUSTER_NAME"),
+		"label stored with each run (default $TREMOR_CLUSTER_NAME)")
 	zapOpts := zap.Options{}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -61,11 +71,33 @@ func main() {
 		os.Exit(1)
 	}
 
+	// History is optional: with no URI the operator behaves exactly as before.
+	var history runstore.Store
+	if historyURI != "" {
+		st, err := mongostore.New(context.Background(), historyURI, mongostore.DefaultDatabase)
+		if err != nil {
+			setupLog.Error(err, "unable to configure history store")
+			os.Exit(1)
+		}
+		// Indexes are best effort: the database may still be starting, and the
+		// operator must not depend on it (ADR 0004).
+		ictx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := st.EnsureIndexes(ictx); err != nil {
+			setupLog.Info("could not create history indexes yet; continuing", "error", err.Error())
+		}
+		cancel()
+		history = st
+		setupLog.Info("run history enabled")
+	}
+
 	if err := (&controller.ChaosExperimentReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Prober:  prober.NewManager(),
-		Metrics: metrics.New(ctrlmetrics.Registry),
+		Client:          mgr.GetClient(),
+		Scheme:          mgr.GetScheme(),
+		Prober:          prober.NewManager(),
+		Metrics:         metrics.New(ctrlmetrics.Registry),
+		History:         history,
+		ClusterName:     clusterName,
+		OperatorVersion: version.Version,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)
