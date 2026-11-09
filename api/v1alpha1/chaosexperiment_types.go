@@ -5,12 +5,19 @@ import (
 )
 
 // FaultType names a kind of failure Tremor can inject.
-// +kubebuilder:validation:Enum=PodKill
+// +kubebuilder:validation:Enum=PodKill;DependencyOutage;CPUStress;MemoryStress
 type FaultType string
 
 const (
 	// FaultPodKill force-deletes pods of the target workload.
 	FaultPodKill FaultType = "PodKill"
+	// FaultDependencyOutage scales the workload owning the target pods to zero
+	// for a duration, then restores it.
+	FaultDependencyOutage FaultType = "DependencyOutage"
+	// FaultCPUStress burns CPU inside target pods for a duration.
+	FaultCPUStress FaultType = "CPUStress"
+	// FaultMemoryStress holds memory inside target pods for a duration.
+	FaultMemoryStress FaultType = "MemoryStress"
 )
 
 // Phase is the lifecycle phase of an experiment.
@@ -20,6 +27,7 @@ const (
 	PhasePending       Phase = "Pending"
 	PhaseBaselineCheck Phase = "BaselineCheck"
 	PhaseInjecting     Phase = "Injecting"
+	PhaseHolding       Phase = "Holding"
 	PhaseRecovering    Phase = "Recovering"
 	PhaseCompleted     Phase = "Completed"
 	PhaseFailed        Phase = "Failed"
@@ -42,6 +50,20 @@ type FaultParams struct {
 	// +kubebuilder:validation:Minimum=1
 	// +optional
 	Count int32 `json:"count,omitempty"`
+	// Duration is how long a sustained fault (DependencyOutage, CPUStress,
+	// MemoryStress) stays active. Default 30s, between 1s and 10m.
+	// +optional
+	Duration *metav1.Duration `json:"duration,omitempty"`
+	// CPUWorkers is the number of busy loops per pod for CPUStress (default 1).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=64
+	// +optional
+	CPUWorkers int32 `json:"cpuWorkers,omitempty"`
+	// MemoryMiB is the memory held per pod for MemoryStress (default 256).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=16384
+	// +optional
+	MemoryMiB int32 `json:"memoryMiB,omitempty"`
 }
 
 // FaultSpec describes the failure to inject.
@@ -115,6 +137,13 @@ type AffectedPod struct {
 	UID  string `json:"uid"`
 }
 
+// WorkloadRef names the workload (Deployment or StatefulSet) that owns the
+// target pods of a DependencyOutage.
+type WorkloadRef struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+}
+
 // ChaosExperimentStatus is the observed state of an experiment.
 type ChaosExperimentStatus struct {
 	Phase   Phase  `json:"phase,omitempty"`
@@ -125,6 +154,11 @@ type ChaosExperimentStatus struct {
 	StartedAt   *metav1.MicroTime `json:"startedAt,omitempty"`
 	InjectedAt  *metav1.MicroTime `json:"injectedAt,omitempty"`
 	RecoveredAt *metav1.MicroTime `json:"recoveredAt,omitempty"`
+	// RevertedAt is when a sustained fault was released. Recovery times of
+	// sustained faults are measured from here, not from injectedAt.
+	RevertedAt *metav1.MicroTime `json:"revertedAt,omitempty"`
+	// Workload is the workload a DependencyOutage scaled down.
+	Workload *WorkloadRef `json:"workload,omitempty"`
 
 	// BaselineReadyPods is the ready pod count before injection.
 	BaselineReadyPods int32 `json:"baselineReadyPods,omitempty"`

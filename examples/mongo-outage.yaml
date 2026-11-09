@@ -1,3 +1,4 @@
+# See config/samples/mongo-outage.yaml for the runnable version.
 apiVersion: tremor.dev/v1alpha1
 kind: ChaosExperiment
 metadata:
@@ -9,11 +10,14 @@ spec:
       app: mongo
   fault:
     type: DependencyOutage
-  duration: 45s
+    params:
+      duration: 45s
+  safety:
+    allowTotalOutage: true
   steadyState:
     http:
-      url: http://shop.demo.svc:8080/readyz
+      url: http://shop.demo.svc:8080/orders
       expectStatus: 200
     interval: 1s
     successThreshold: 5
-    timeout: 180s
+  recoveryTimeout: 180s

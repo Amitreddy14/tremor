@@ -13,8 +13,14 @@ const (
 // Decide evaluates one step of the experiment state machine.
 //
 //	Pending -> BaselineCheck -> Injecting -> Recovering -> Completed
-//	                 |                           |
-//	                 +--------> Failed <---------+      (any non-terminal -> Aborted)
+//	                 |             |   ^          |
+//	                 |             v   |          |
+//	                 |           Holding          |        (sustained faults only)
+//	                 +--------> Failed <----------+      (any non-terminal -> Aborted)
+//
+// One-shot faults (PodKill) go straight from Injecting to Recovering. Sustained
+// faults wait in Holding until the fault has run its course, are then released,
+// and the recovery clock starts at the release.
 func Decide(phase Phase, o Observation, c Config) Decision {
 	if IsTerminal(phase) {
 		return Decision{Next: phase}
@@ -50,10 +56,25 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 		return Decision{Next: PhaseInjecting, Action: ActionPlan, Message: "baseline healthy, targets chosen"}
 
 	case PhaseInjecting:
+		if o.Sustained {
+			return Decision{Next: PhaseHolding, Action: ActionInject, Message: "fault injected, holding until it has run its course", RequeueAfter: recoveryPoll}
+		}
 		return Decision{Next: PhaseRecovering, Action: ActionInject, Message: "fault injected, waiting for recovery", RequeueAfter: recoveryPoll}
 
+	case PhaseHolding:
+		if o.FaultDone {
+			return Decision{Next: PhaseRecovering, Action: ActionRevert, Message: "fault released, waiting for recovery", RequeueAfter: recoveryPoll}
+		}
+		return Decision{Next: PhaseHolding, Message: "fault active, holding until it has run its course", RequeueAfter: recoveryPoll}
+
 	case PhaseRecovering:
-		elapsed := o.Now.Sub(o.InjectedAt)
+		// Recovery is timed from the release of a sustained fault, otherwise
+		// from injection, so a long outage does not inflate the recovery time.
+		start := o.InjectedAt
+		if !o.RevertedAt.IsZero() {
+			start = o.RevertedAt
+		}
+		elapsed := o.Now.Sub(start)
 		if elapsed < 0 {
 			elapsed = 0
 		}
@@ -69,7 +90,7 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 			if podsAt.IsZero() {
 				podsAt = o.Now
 			}
-			if podTime = podsAt.Sub(o.InjectedAt); podTime < 0 {
+			if podTime = podsAt.Sub(start); podTime < 0 {
 				podTime = 0
 			}
 		}

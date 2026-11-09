@@ -19,7 +19,7 @@ Make resilience testing declarative and measurable. Engineers describe a failure
 
 ## The `ChaosExperiment` API (v1alpha1, group `tremor.dev`)
 
-Sketch of the final shape. `api/v1alpha1` is the source of truth. Implemented through Phase 2: `target`, `fault` (PodKill), `safety`, `steadyState` (HTTP probe) and `recoveryTimeout`. Results are reported in milliseconds as `podRecoveryMillis` and `userRecoveryMillis`.
+Sketch of the final shape. `api/v1alpha1` is the source of truth. Implemented through Phase 5: `target`, `fault` (PodKill, DependencyOutage, CPUStress, MemoryStress), `safety`, `steadyState` (HTTP probe) and `recoveryTimeout`. Results are reported in milliseconds as `podRecoveryMillis` and `userRecoveryMillis`.
 
 ```yaml
 apiVersion: tremor.dev/v1alpha1

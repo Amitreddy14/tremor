@@ -7,7 +7,7 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 // phases are the label values of tremor_experiment_phase.
-var phases = []string{"Pending", "BaselineCheck", "Injecting", "Recovering", "Completed", "Failed", "Aborted"}
+var phases = []string{"Pending", "BaselineCheck", "Injecting", "Holding", "Recovering", "Completed", "Failed", "Aborted"}
 
 // Recorder owns every Tremor metric.
 type Recorder struct {

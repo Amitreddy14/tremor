@@ -100,3 +100,17 @@ func TestAvailability(t *testing.T) {
 		t.Errorf("Availability = %v, %v; want 0.75, true", a, ok)
 	}
 }
+
+func TestFaultActive(t *testing.T) {
+	inj := base
+	rel := base.Add(45 * time.Second)
+	if d, ok := (Run{InjectedAt: &inj, RevertedAt: &rel}).FaultActive(); !ok || d != 45*time.Second {
+		t.Errorf("FaultActive = %v, %v; want 45s, true", d, ok)
+	}
+	if _, ok := (Run{InjectedAt: &inj}).FaultActive(); ok {
+		t.Error("a run without a release is a one-shot fault")
+	}
+	if _, ok := (Run{}).FaultActive(); ok {
+		t.Error("an empty run has no active period")
+	}
+}

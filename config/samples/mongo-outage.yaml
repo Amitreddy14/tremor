@@ -1,0 +1,28 @@
+# Take the shop's MongoDB down for 30 seconds and measure what users see.
+#
+# target.selector picks the pods of the dependency; Tremor finds the Deployment
+# or StatefulSet that owns them, scales it to zero, and restores it afterwards.
+# Recovery times are measured from the moment MongoDB is brought back.
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: mongo-outage
+  namespace: demo
+spec:
+  target:
+    selector:
+      app: mongo
+  fault:
+    type: DependencyOutage
+    params:
+      duration: 30s
+  safety:
+    # An outage takes the whole workload down, so it must be confirmed.
+    allowTotalOutage: true
+  steadyState:
+    http:
+      url: http://shop.demo.svc.cluster.local:8080/orders
+      expectStatus: 200
+    interval: 1s
+    successThreshold: 3
+  recoveryTimeout: 180s

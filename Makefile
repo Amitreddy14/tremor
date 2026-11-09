@@ -2,6 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 IMG     ?= tremor-manager:dev
 IMG_SHOP ?= tremor-shop:dev
+IMG_STRESS ?= busybox:1.36
 LDFLAGS := -X github.com/Amitreddy14/tremor/internal/version.Version=$(VERSION) \
            -X github.com/Amitreddy14/tremor/internal/version.Commit=$(COMMIT)
 
@@ -76,6 +77,8 @@ kind-down: ## Delete the kind cluster
 
 kind-deploy: docker-build ## Build, load into kind, deploy the operator and its history MongoDB
 	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
+	docker pull $(IMG_STRESS)
+	kind load docker-image $(IMG_STRESS) --name $(KIND_CLUSTER)
 	kubectl apply -k config/history
 	kubectl -n tremor-system rollout status deploy/tremor-history --timeout=180s
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s

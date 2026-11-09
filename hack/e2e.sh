@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end check: kill a shop pod and expect pod and user-visible recovery
-# times. Run `make demo-deploy` first.
+# End-to-end check: kill a shop pod, take MongoDB down, stress the shop's CPU,
+# and check recovery times, metrics and run history. Run `make demo-deploy` first.
 set -euo pipefail
 
 on_error() {
@@ -54,8 +54,44 @@ echo "${metrics}" | grep -E 'tremor_recovery_seconds_count\{[^}]*kind="user"[^}]
 echo "${metrics}" | grep -E 'tremor_last_availability_ratio\{[^}]*\} '
 echo "metrics check passed"
 
-# History: the finished run must be saved to MongoDB and readable by tremorctl.
-kubectl -n demo wait --for=jsonpath='{.status.runRecorded}'=true chaosexperiment/kill-shop --timeout=60s
+# --- DependencyOutage: take the shop's MongoDB down and bring it back ---------
+echo "--- DependencyOutage: MongoDB down for 30s ---"
+kubectl apply -f config/samples/mongo-outage.yaml
+kubectl -n demo wait --for=jsonpath='{.status.phase}'=Completed chaosexperiment/mongo-outage --timeout=300s
+
+kubectl -n demo get chaosexperiment mongo-outage
+getx() { kubectl -n demo get chaosexperiment "$1" -o jsonpath="{.status.$2}"; }
+echo "pod recovery (from release):  $(getx mongo-outage podRecoveryMillis) ms"
+echo "user recovery (from release): $(getx mongo-outage userRecoveryMillis) ms (impacted: $(getx mongo-outage userImpacted))"
+echo "probes: $(getx mongo-outage probeSuccesses) ok, $(getx mongo-outage probeFailures) failed"
+
+# Taking the database down must be visible to users (the shop goes unready).
+test "$(getx mongo-outage userImpacted)" = "true"
+test -n "$(getx mongo-outage revertedAt)"
+test -n "$(getx mongo-outage podRecoveryMillis)"
+# ... and the dependency must be fully restored, markers removed.
+test "$(kubectl -n demo get deploy mongo -o jsonpath='{.spec.replicas}')" = "1"
+test -z "$(kubectl -n demo get deploy mongo -o jsonpath='{.metadata.annotations.tremor\.dev/held-by}')"
+kubectl -n demo rollout status deploy/mongo --timeout=120s
+kubectl -n demo rollout status deploy/shop --timeout=120s
+
+# --- CPUStress: burn CPU inside one shop pod ----------------------------------
+echo "--- CPUStress: 30s on one shop pod ---"
+kubectl apply -f config/samples/shop-cpu-stress.yaml
+kubectl -n demo wait --for=jsonpath='{.status.phase}'=Completed chaosexperiment/shop-cpu-stress --timeout=300s
+
+kubectl -n demo get chaosexperiment shop-cpu-stress
+echo "pod recovery:  $(getx shop-cpu-stress podRecoveryMillis) ms"
+echo "user recovery: $(getx shop-cpu-stress userRecoveryMillis) ms (impacted: $(getx shop-cpu-stress userImpacted))"
+test -n "$(getx shop-cpu-stress revertedAt)"
+test -n "$(getx shop-cpu-stress userRecoveryMillis)"
+# Stress does not remove pods: all three shop pods are still there.
+test "$(kubectl -n demo get pods -l app=shop --no-headers | wc -l | tr -d ' ')" = "3"
+
+# --- History: every finished run must be saved and readable by tremorctl -------
+for exp in kill-shop mongo-outage shop-cpu-stress; do
+  kubectl -n demo wait --for=jsonpath='{.status.runRecorded}'=true "chaosexperiment/${exp}" --timeout=60s
+done
 
 kubectl -n tremor-system port-forward svc/tremor-history 27117:27017 >/dev/null 2>&1 &
 hist_pid=$!
@@ -67,13 +103,24 @@ ctl() { go run ./cmd/tremorctl "$@" --mongo-uri mongodb://127.0.0.1:27117; }
 echo "--- tremorctl history ---"
 history_json=""
 for _ in $(seq 1 10); do
-  if history_json=$(ctl history --output json 2>/dev/null) && echo "${history_json}" | grep -q '"name": "kill-shop"'; then break; fi
+  if history_json=$(ctl history --output json 2>/dev/null) \
+    && echo "${history_json}" | grep -q '"name": "kill-shop"' \
+    && echo "${history_json}" | grep -q '"name": "mongo-outage"' \
+    && echo "${history_json}" | grep -q '"name": "shop-cpu-stress"'; then break; fi
   sleep 2
 done
 echo "${history_json}" | grep -q '"name": "kill-shop"'
+echo "${history_json}" | grep -q '"name": "mongo-outage"'
+echo "${history_json}" | grep -q '"name": "shop-cpu-stress"'
 echo "${history_json}" | grep -q '"result": "completed"'
 ctl history
+echo "--- tremorctl show (outage) ---"
+outage_id=$(echo "${history_json}" | python3 -c 'import json,sys; print(next(r["id"] for r in json.load(sys.stdin) if r["name"]=="mongo-outage"))')
+shown=$(ctl show "${outage_id}")
+echo "${shown}"
+echo "${shown}" | grep -q 'from release'
 echo "--- tremorctl report ---"
-ctl report --since all
-ctl report --since all | grep -q 'PodKill'
+report=$(ctl report --since all)
+echo "${report}"
+for f in PodKill DependencyOutage CPUStress; do echo "${report}" | grep -q "${f}"; done
 echo "history check passed"

@@ -15,6 +15,17 @@ rules:
   - apiGroups: [""]
     resources: [pods]
     verbs: [get, list, watch, delete]
+  # Ephemeral containers carry CPU and memory stress into target pods.
+  - apiGroups: [""]
+    resources: [pods/ephemeralcontainers]
+    verbs: [update, patch]
+  # DependencyOutage scales a Deployment or StatefulSet to zero and back.
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     verbs: [get, list, watch, create, update, patch, delete]

@@ -29,6 +29,9 @@ func observe(exp *tremorv1.ChaosExperiment, pods []corev1.Pod, now time.Time,
 	if exp.Status.PodsRecoveredAt != nil {
 		o.PodsRecoveredAt = exp.Status.PodsRecoveredAt.Time
 	}
+	if exp.Status.RevertedAt != nil {
+		o.RevertedAt = exp.Status.RevertedAt.Time
+	}
 	if probing {
 		o.ProbeEnabled = true
 		o.ProbeHealthy = prober.Healthy(series, threshold)
@@ -103,6 +106,38 @@ func isReady(p *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// faultParams converts the spec's fault parameters into the engine's plain form.
+func faultParams(exp *tremorv1.ChaosExperiment) engine.FaultParams {
+	p := exp.Spec.Fault.Params
+	fp := engine.FaultParams{
+		Type:             string(exp.Spec.Fault.Type),
+		Count:            int(p.Count),
+		CPUWorkers:       int(p.CPUWorkers),
+		MemoryMiB:        int(p.MemoryMiB),
+		AllowTotalOutage: exp.Spec.Safety.AllowTotalOutage,
+	}
+	if p.Duration != nil {
+		fp.Duration = p.Duration.Duration
+	}
+	return fp
+}
+
+// faultSpec collects what an injector needs from the experiment and its status.
+func faultSpec(exp *tremorv1.ChaosExperiment, fp engine.FaultParams) fault.Spec {
+	s := fault.Spec{
+		Namespace:  exp.Namespace,
+		Targets:    toTargets(exp.Status.AffectedPods),
+		Holder:     string(exp.UID),
+		Duration:   fp.Duration,
+		CPUWorkers: fp.CPUWorkers,
+		MemoryMiB:  fp.MemoryMiB,
+	}
+	if w := exp.Status.Workload; w != nil {
+		s.Workload = fault.Workload{Kind: w.Kind, Name: w.Name}
+	}
+	return s
 }
 
 func toTargets(in []tremorv1.AffectedPod) []fault.Target {

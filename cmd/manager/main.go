@@ -8,10 +8,12 @@ import (
 	"os"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -19,6 +21,7 @@ import (
 
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 	"github.com/Amitreddy14/tremor/internal/controller"
+	"github.com/Amitreddy14/tremor/internal/fault"
 	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
 	"github.com/Amitreddy14/tremor/internal/runstore"
@@ -34,6 +37,7 @@ func main() {
 		showVersion bool
 		historyURI  string
 		clusterName string
+		stressImage string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the Prometheus metrics endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe endpoint binds to")
@@ -43,6 +47,8 @@ func main() {
 		"MongoDB URI for run history (default $TREMOR_HISTORY_MONGO_URI); history is disabled when empty")
 	flag.StringVar(&clusterName, "cluster-name", os.Getenv("TREMOR_CLUSTER_NAME"),
 		"label stored with each run (default $TREMOR_CLUSTER_NAME)")
+	flag.StringVar(&stressImage, "stress-image", fault.DefaultStressImage,
+		"image for CPU and memory stress containers; needs sh, yes, sleep, kill and dd (BusyBox has them)")
 	zapOpts := zap.Options{}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -60,7 +66,13 @@ func main() {
 	utilruntime.Must(tremorv1.AddToScheme(scheme))
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:                 scheme,
+		Scheme: scheme,
+		// DependencyOutage must see its own writes: a cached read just after
+		// scaling a workload down could miss the hold marker and skip the
+		// restore. These kinds are rarely read, so go straight to the API server.
+		Client: client.Options{Cache: &client.CacheOptions{
+			DisableFor: []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}},
+		}},
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         leaderElect,
@@ -98,6 +110,7 @@ func main() {
 		History:         history,
 		ClusterName:     clusterName,
 		OperatorVersion: version.Version,
+		StressImage:     stressImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)
