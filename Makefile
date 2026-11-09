@@ -13,13 +13,14 @@ KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
         docker-build-shop demo-deploy demo-undeploy \
-        monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy e2e undeploy
+        monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy history-forward tremorctl e2e undeploy
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-14s %s\n",$$1,$$2}'
 
-build: ## Build the operator binary into ./bin
+build: ## Build the operator and tremorctl binaries into ./bin
 	go build -ldflags "$(LDFLAGS)" -o bin/manager ./cmd/manager
+	go build -ldflags "$(LDFLAGS)" -o bin/tremorctl ./cmd/tremorctl
 
 $(CONTROLLER_GEN):
 	GOBIN=$(LOCALBIN) go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.16.5
@@ -73,10 +74,17 @@ kind-up-lite: ## Create the 2-node kind cluster for low-memory machines
 kind-down: ## Delete the kind cluster
 	kind delete cluster --name $(KIND_CLUSTER)
 
-kind-deploy: docker-build ## Build, load into kind, and deploy the operator
+kind-deploy: docker-build ## Build, load into kind, deploy the operator and its history MongoDB
 	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
-	kubectl apply -k config/default
+	kubectl apply -k config/history
+	kubectl -n tremor-system rollout status deploy/tremor-history --timeout=180s
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s
+
+history-forward: ## Port-forward the history MongoDB to localhost:27017
+	kubectl -n tremor-system port-forward svc/tremor-history 27017:27017
+
+tremorctl: ## Build the tremorctl CLI into ./bin
+	go build -ldflags "$(LDFLAGS)" -o bin/tremorctl ./cmd/tremorctl
 
 e2e: ## Run the end-to-end script (run demo-deploy first)
 	bash ./hack/e2e.sh

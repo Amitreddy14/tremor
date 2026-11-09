@@ -24,6 +24,7 @@ import (
 	"github.com/Amitreddy14/tremor/internal/fault"
 	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
+	"github.com/Amitreddy14/tremor/internal/runstore"
 )
 
 const (
@@ -44,6 +45,14 @@ type ChaosExperimentReconciler struct {
 	Prober *prober.Manager
 	// Metrics records Prometheus metrics; metrics are skipped when nil.
 	Metrics *metrics.Recorder
+	// History stores finished runs. Recording is skipped when nil; the
+	// experiment resource stays the source of truth either way.
+	History runstore.Store
+	// ClusterName labels recorded runs; useful when several clusters share one
+	// history database.
+	ClusterName string
+	// OperatorVersion labels recorded runs.
+	OperatorVersion string
 }
 
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments,verbs=get;list;watch;update;patch
@@ -76,7 +85,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	phase := engine.Phase(exp.Status.Phase)
 	if engine.IsTerminal(phase) {
 		r.stopProbe(&exp)
-		return ctrl.Result{}, nil
+		return r.recordRun(ctx, &exp, phase)
 	}
 
 	injector, ok := fault.For(string(exp.Spec.Fault.Type))
@@ -172,6 +181,10 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	if d.Next != phase {
 		lg.Info("phase changed", "experiment", req.NamespacedName, "from", phase, "to", d.Next, "message", d.Message)
+	}
+	if engine.IsTerminal(d.Next) && r.History != nil {
+		// Come straight back through the terminal path to record the run.
+		return ctrl.Result{Requeue: true}, nil
 	}
 	return ctrl.Result{RequeueAfter: d.RequeueAfter}, nil
 }

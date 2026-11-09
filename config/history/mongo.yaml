@@ -1,0 +1,60 @@
+# MongoDB that stores Tremor's run history. Kept separate from the demo's
+# MongoDB so a "dependency outage" experiment against the demo never touches
+# the history. Data is ephemeral (emptyDir): fine for kind, but use a PVC or
+# MongoDB Atlas for anything you want to keep (see docs/DEPLOYMENT.md).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tremor-history
+  labels:
+    app.kubernetes.io/name: tremor
+    app.kubernetes.io/component: history
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tremor
+      app.kubernetes.io/component: history
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tremor
+        app.kubernetes.io/component: history
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:7.0
+          ports:
+            - name: mongo
+              containerPort: 27017
+          readinessProbe:
+            tcpSocket: { port: mongo }
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tremor-history
+  labels:
+    app.kubernetes.io/name: tremor
+    app.kubernetes.io/component: history
+spec:
+  selector:
+    app.kubernetes.io/name: tremor
+    app.kubernetes.io/component: history
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo

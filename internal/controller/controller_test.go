@@ -25,6 +25,7 @@ import (
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 	"github.com/Amitreddy14/tremor/internal/metrics"
 	"github.com/Amitreddy14/tremor/internal/prober"
+	"github.com/Amitreddy14/tremor/internal/runstore"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -37,6 +38,8 @@ var (
 	testEnv   *envtest.Environment
 	stopMgr   context.CancelFunc
 	testReg   = prometheus.NewRegistry()
+	// testHistory receives every finished run, like the MongoDB store would.
+	testHistory = &runstore.MemoryStore{}
 )
 
 // TestMain stops the shared test environment after all tests have run.
@@ -93,12 +96,15 @@ func bootEnv() (client.Client, error) {
 		return nil, err
 	}
 	r := &ChaosExperimentReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  scheme,
-		Now:     time.Now,
-		Rand:    rand.New(rand.NewSource(1)),
-		Prober:  prober.NewManager(),
-		Metrics: metrics.New(testReg),
+		Client:          mgr.GetClient(),
+		Scheme:          scheme,
+		Now:             time.Now,
+		Rand:            rand.New(rand.NewSource(1)),
+		Prober:          prober.NewManager(),
+		Metrics:         metrics.New(testReg),
+		History:         testHistory,
+		ClusterName:     "test",
+		OperatorVersion: "vtest",
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, err
@@ -449,5 +455,60 @@ func TestMetricsAreRecorded(t *testing.T) {
 	}
 	if got := metricSum("tremor_experiment_phase", map[string]string{"experiment": "metered-kill", "phase": "Completed"}); got != 1 {
 		t.Errorf("Completed phase gauge = %v, want 1", got)
+	}
+}
+
+func TestFinishedRunIsRecordedOnce(t *testing.T) {
+	c := startEnv(t)
+	ctx := context.Background()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 3; i++ {
+		newReadyPod(t, c, "ledger")
+	}
+	exp := newExperiment("ledger-kill", "ledger")
+	exp.Spec.SteadyState = steadyState(srv.URL)
+	if err := c.Create(ctx, exp); err != nil {
+		t.Fatal(err)
+	}
+
+	eventually(t, 30*time.Second, "Recovering phase", func() bool {
+		return phaseOf(c, "ledger-kill") == tremorv1.PhaseRecovering
+	})
+	newReadyPod(t, c, "ledger")
+
+	var uid string
+	eventually(t, 30*time.Second, "run recorded flag", func() bool {
+		e := getExperiment(t, c, "ledger-kill")
+		uid = string(e.UID)
+		return e.Status.Phase == tremorv1.PhaseCompleted && e.Status.RunRecorded
+	})
+
+	run, err := testHistory.Get(ctx, uid)
+	if err != nil {
+		t.Fatalf("run missing from history: %v", err)
+	}
+	if run.Result != "completed" || run.FaultType != "PodKill" || run.Namespace != testNamespace || run.Name != "ledger-kill" {
+		t.Errorf("run identity wrong: %+v", run)
+	}
+	if run.Cluster != "test" || run.OperatorVersion != "vtest" {
+		t.Errorf("cluster/version = %q/%q, want test/vtest", run.Cluster, run.OperatorVersion)
+	}
+	if run.BaselineReadyPods != 3 || len(run.AffectedPods) != 1 || run.Selector["app"] != "ledger" {
+		t.Errorf("targeting wrong: %+v", run)
+	}
+	if run.PodRecoveryMillis == nil || run.UserRecoveryMillis == nil || run.SteadyStateURL != srv.URL {
+		t.Errorf("recovery fields wrong: %+v", run)
+	}
+	if run.InjectedAt == nil || run.RecoveredAt == nil || run.StartedAt.IsZero() {
+		t.Errorf("timestamps missing: %+v", run)
+	}
+
+	if got := metricSum("tremor_run_store_writes_total", map[string]string{"result": "ok"}); got < 1 {
+		t.Errorf("run store write metric = %v, want >= 1", got)
 	}
 }

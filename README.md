@@ -82,6 +82,24 @@ Open the **Tremor chaos experiments** dashboard, then run `kubectl apply -f conf
 
 The metrics endpoint is unauthenticated plain HTTP inside the cluster, which is fine for a local demo; production setups should front it with network policy or TLS.
 
+### Run history and reports
+
+`make kind-deploy` also starts a small MongoDB (`tremor-history`) and points the operator at it. When an experiment finishes, the operator saves one document per run to `tremor.runs`. The `ChaosExperiment` status stays the source of truth: if MongoDB is down, experiments still run and the save is retried every 15 seconds.
+
+```bash
+make tremorctl                # builds ./bin/tremorctl
+make history-forward          # in another terminal: MongoDB on localhost:27017
+
+export TREMOR_MONGO_URI=mongodb://127.0.0.1:27017
+./bin/tremorctl history                       # newest runs first
+./bin/tremorctl history --fault PodKill --result completed --since 7d
+./bin/tremorctl show <run-id>                 # an ID prefix is enough
+./bin/tremorctl report --since all            # p50 / p95 recovery per fault type
+./bin/tremorctl report --format markdown      # a table you can paste into a README
+```
+
+Every command also accepts `--output json` (history, show) or `--format json` (report). Runs from before history was enabled are saved the first time the operator sees them. `tremor_run_store_writes_total{result}` counts saves (`ok`, `error`). For a persistent store use MongoDB Atlas (free M0) and set the operator's `--history-mongo-uri`.
+
 ### Demo shop
 
 `cmd/shop` is a small Go orders API backed by MongoDB (`GET /healthz`, `GET /readyz`, `POST /orders`, `GET /orders`). Readiness depends on the database, so a MongoDB outage takes shop pods out of the Service, which the dependency-outage experiment in Phase 5 will exploit.
@@ -93,7 +111,7 @@ Requirements: Go 1.23+, Docker, [kind](https://kind.sigs.k8s.io/), kubectl.
 ```bash
 make test-unit       # unit tests only (envtest tests skip)
 make test            # unit + envtest controller tests (Linux/macOS/WSL2)
-make build           # builds ./bin/manager
+make build           # builds ./bin/manager and ./bin/tremorctl
 make manifests generate   # regenerate CRD, RBAC, deepcopy after editing api/
 ```
 

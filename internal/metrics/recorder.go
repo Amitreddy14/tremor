@@ -18,6 +18,7 @@ type Recorder struct {
 	steadyState  *prometheus.GaugeVec
 	lastRecovery *prometheus.GaugeVec
 	lastAvail    *prometheus.GaugeVec
+	storeWrites  *prometheus.CounterVec
 }
 
 // New creates a Recorder and registers its metrics with reg. The operator
@@ -53,8 +54,12 @@ func New(reg prometheus.Registerer) *Recorder {
 			Name: "tremor_last_availability_ratio",
 			Help: "Share of passing steady-state probes between injection and recovery in the last completed run.",
 		}, []string{"namespace", "experiment"}),
+		storeWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tremor_run_store_writes_total",
+			Help: "Attempts to save a finished run to the history store, by result (ok, error).",
+		}, []string{"result"}),
 	}
-	reg.MustRegister(r.experiments, r.faults, r.recovery, r.phase, r.steadyState, r.lastRecovery, r.lastAvail)
+	reg.MustRegister(r.experiments, r.faults, r.recovery, r.phase, r.steadyState, r.lastRecovery, r.lastAvail, r.storeWrites)
 	return r
 }
 
@@ -123,6 +128,14 @@ func (r *Recorder) RecordRecovery(namespace, experiment, faultType string, podSe
 	if availability != nil {
 		r.lastAvail.WithLabelValues(namespace, experiment).Set(*availability)
 	}
+}
+
+// RunStoreWrite counts one attempt to save a run; result is "ok" or "error".
+func (r *Recorder) RunStoreWrite(result string) {
+	if r == nil {
+		return
+	}
+	r.storeWrites.WithLabelValues(result).Inc()
 }
 
 // Forget drops every per-experiment series, used when an experiment is deleted.
