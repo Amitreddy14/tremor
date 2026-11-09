@@ -27,8 +27,11 @@ type Run struct {
 	// SteadyStateURL is empty when the experiment had no steady-state probe.
 	SteadyStateURL string `bson:"steady_state_url,omitempty" json:"steadyStateUrl,omitempty"`
 
-	StartedAt   time.Time  `bson:"started_at" json:"startedAt"`
-	InjectedAt  *time.Time `bson:"injected_at,omitempty" json:"injectedAt,omitempty"`
+	StartedAt  time.Time  `bson:"started_at" json:"startedAt"`
+	InjectedAt *time.Time `bson:"injected_at,omitempty" json:"injectedAt,omitempty"`
+	// RevertedAt is when a sustained fault (outage, stress) was released. The
+	// recovery times of such runs are measured from here.
+	RevertedAt  *time.Time `bson:"reverted_at,omitempty" json:"revertedAt,omitempty"`
 	RecoveredAt *time.Time `bson:"recovered_at,omitempty" json:"recoveredAt,omitempty"`
 
 	BaselineReadyPods  int      `bson:"baseline_ready_pods" json:"baselineReadyPods"`
@@ -40,6 +43,15 @@ type Run struct {
 	ProbeFailures      int      `bson:"probe_failures" json:"probeFailures"`
 
 	RecordedAt time.Time `bson:"recorded_at" json:"recordedAt"`
+}
+
+// FaultActive is how long a sustained fault was active (injection to release),
+// and false for one-shot faults like PodKill.
+func (r Run) FaultActive() (time.Duration, bool) {
+	if r.InjectedAt == nil || r.RevertedAt == nil {
+		return 0, false
+	}
+	return r.RevertedAt.Sub(*r.InjectedAt), true
 }
 
 // Availability is the share of passing probes, and false when no probes ran.

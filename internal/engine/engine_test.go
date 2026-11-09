@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/rand"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -214,4 +215,132 @@ func TestDecideWithProbe(t *testing.T) {
 			t.Fatalf("got %+v", d)
 		}
 	})
+}
+
+func TestDecideSustainedFault(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	cfg := Config{RecoveryTimeout: 60 * time.Second, BaselineTimeout: 30 * time.Second}
+	injected := now.Add(-45 * time.Second) // outage ran for 45s
+	released := now.Add(-5 * time.Second)  // and was released 5s ago
+
+	t.Run("injecting moves to holding", func(t *testing.T) {
+		d := Decide(PhaseInjecting, Observation{Now: now, Sustained: true}, cfg)
+		if d.Next != PhaseHolding || d.Action != ActionInject {
+			t.Fatalf("got %s/%d, want Holding/Inject", d.Next, d.Action)
+		}
+	})
+	t.Run("one-shot fault skips holding", func(t *testing.T) {
+		d := Decide(PhaseInjecting, Observation{Now: now}, cfg)
+		if d.Next != PhaseRecovering || d.Action != ActionInject {
+			t.Fatalf("got %s/%d, want Recovering/Inject", d.Next, d.Action)
+		}
+	})
+	t.Run("holding waits", func(t *testing.T) {
+		d := Decide(PhaseHolding, Observation{Now: now, InjectedAt: injected, Sustained: true}, cfg)
+		if d.Next != PhaseHolding || d.Action != ActionNone || d.RequeueAfter == 0 {
+			t.Fatalf("got %s/%d requeue=%s, want Holding/None with a requeue", d.Next, d.Action, d.RequeueAfter)
+		}
+	})
+	t.Run("holding releases when done", func(t *testing.T) {
+		d := Decide(PhaseHolding, Observation{Now: now, InjectedAt: injected, Sustained: true, FaultDone: true}, cfg)
+		if d.Next != PhaseRecovering || d.Action != ActionRevert {
+			t.Fatalf("got %s/%d, want Recovering/Revert", d.Next, d.Action)
+		}
+	})
+	t.Run("holding is never subject to the recovery timeout", func(t *testing.T) {
+		// 45s held with a 10s timeout must not fail: the timeout only covers recovery.
+		short := Config{RecoveryTimeout: 10 * time.Second}
+		d := Decide(PhaseHolding, Observation{Now: now, InjectedAt: injected, Sustained: true}, short)
+		if d.Next != PhaseHolding {
+			t.Fatalf("got %s, want Holding", d.Next)
+		}
+	})
+	t.Run("recovery is timed from the release", func(t *testing.T) {
+		o := Observation{Now: now, InjectedAt: injected, RevertedAt: released, Sustained: true, TotalPods: 1, ReadyPods: 1, BaselineReady: 1}
+		d := Decide(PhaseRecovering, o, cfg)
+		if d.Next != PhaseCompleted || d.RecoveryTime != 5*time.Second {
+			t.Fatalf("got %s recovery=%s, want Completed 5s (not 45s)", d.Next, d.RecoveryTime)
+		}
+	})
+	t.Run("recovery timeout counts from the release", func(t *testing.T) {
+		// 45s since injection would exceed 30s, but only 5s since release.
+		short := Config{RecoveryTimeout: 30 * time.Second}
+		o := Observation{Now: now, InjectedAt: injected, RevertedAt: released, Sustained: true, TotalPods: 1, ReadyPods: 0, BaselineReady: 1}
+		if d := Decide(PhaseRecovering, o, short); d.Next != PhaseRecovering {
+			t.Fatalf("got %s, want still Recovering", d.Next)
+		}
+		o.RevertedAt = now.Add(-31 * time.Second)
+		if d := Decide(PhaseRecovering, o, short); d.Next != PhaseFailed {
+			t.Fatalf("got %s, want Failed after 31s", d.Next)
+		}
+	})
+	t.Run("abort while holding", func(t *testing.T) {
+		d := Decide(PhaseHolding, Observation{Now: now, Sustained: true}, Config{Abort: true})
+		if d.Next != PhaseAborted {
+			t.Fatalf("got %s, want Aborted", d.Next)
+		}
+	})
+}
+
+func TestFaultClassification(t *testing.T) {
+	for _, tc := range []struct {
+		fault                  string
+		sustained, removesPods bool
+	}{
+		{FaultPodKill, false, true},
+		{FaultDependencyOutage, true, true},
+		{FaultCPUStress, true, false},
+		{FaultMemoryStress, true, false},
+		{"Bogus", false, false},
+	} {
+		if got := IsSustained(tc.fault); got != tc.sustained {
+			t.Errorf("IsSustained(%s) = %v, want %v", tc.fault, got, tc.sustained)
+		}
+		if got := RemovesPods(tc.fault); got != tc.removesPods {
+			t.Errorf("RemovesPods(%s) = %v, want %v", tc.fault, got, tc.removesPods)
+		}
+	}
+}
+
+func TestNormalizeFault(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      FaultParams
+		want    FaultParams
+		wantErr string
+	}{
+		{"pod kill as is", FaultParams{Type: FaultPodKill, Count: 2}, FaultParams{Type: FaultPodKill, Count: 2}, ""},
+		{"cpu defaults", FaultParams{Type: FaultCPUStress}, FaultParams{Type: FaultCPUStress, Duration: 30 * time.Second, CPUWorkers: 1}, ""},
+		{"memory defaults", FaultParams{Type: FaultMemoryStress}, FaultParams{Type: FaultMemoryStress, Duration: 30 * time.Second, MemoryMiB: 256}, ""},
+		{"cpu explicit", FaultParams{Type: FaultCPUStress, Count: 1, Duration: time.Minute, CPUWorkers: 4}, FaultParams{Type: FaultCPUStress, Count: 1, Duration: time.Minute, CPUWorkers: 4}, ""},
+		{"outage confirmed", FaultParams{Type: FaultDependencyOutage, Duration: 45 * time.Second, AllowTotalOutage: true}, FaultParams{Type: FaultDependencyOutage, Duration: 45 * time.Second, AllowTotalOutage: true}, ""},
+		{"outage needs confirmation", FaultParams{Type: FaultDependencyOutage, Duration: time.Minute}, FaultParams{}, "allowTotalOutage"},
+		{"outage rejects count", FaultParams{Type: FaultDependencyOutage, Count: 1, AllowTotalOutage: true}, FaultParams{}, "count does not apply"},
+		{"unknown type", FaultParams{Type: "Bogus"}, FaultParams{}, "unsupported fault type"},
+		{"negative count", FaultParams{Type: FaultPodKill, Count: -1}, FaultParams{}, "negative"},
+		{"duration too short", FaultParams{Type: FaultCPUStress, Duration: time.Millisecond}, FaultParams{}, "duration must be between"},
+		{"duration too long", FaultParams{Type: FaultCPUStress, Duration: time.Hour}, FaultParams{}, "duration must be between"},
+		{"pod kill rejects duration", FaultParams{Type: FaultPodKill, Duration: time.Minute}, FaultParams{}, "duration does not apply"},
+		{"cpu workers too many", FaultParams{Type: FaultCPUStress, CPUWorkers: 1000}, FaultParams{}, "cpuWorkers must be between"},
+		{"cpu workers on memory", FaultParams{Type: FaultMemoryStress, CPUWorkers: 2}, FaultParams{}, "cpuWorkers does not apply"},
+		{"memory too big", FaultParams{Type: FaultMemoryStress, MemoryMiB: 1 << 20}, FaultParams{}, "memoryMiB must be between"},
+		{"memory on cpu", FaultParams{Type: FaultCPUStress, MemoryMiB: 64}, FaultParams{}, "memoryMiB does not apply"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NormalizeFault(tt.in)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want it to contain %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("got %+v, want %+v", got, tt.want)
+			}
+		})
+	}
 }

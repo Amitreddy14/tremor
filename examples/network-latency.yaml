@@ -12,7 +12,7 @@ spec:
     params:
       latency: 300ms
       jitter: 50ms
-  duration: 60s
+      duration: 60s
   steadyState:
     http:
       url: http://shop.demo.svc:8080/healthz

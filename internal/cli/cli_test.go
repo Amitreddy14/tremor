@@ -208,6 +208,28 @@ func TestShowErrors(t *testing.T) {
 	}
 }
 
+func TestShowSustainedFault(t *testing.T) {
+	m := &runstore.MemoryStore{}
+	inj := now.Add(-10 * time.Minute)
+	rel := inj.Add(45 * time.Second)
+	_ = m.Save(context.Background(), runstore.Run{
+		ID: "cccc4444-0000", Namespace: "demo", Name: "mongo-outage", FaultType: "DependencyOutage", Result: "completed",
+		SteadyStateURL: "http://shop/orders", StartedAt: inj, InjectedAt: &inj, RevertedAt: &rel,
+		PodRecoveryMillis: i64(6000), UserRecoveryMillis: i64(8000), UserImpacted: true, ProbeSuccesses: 20, ProbeFailures: 45,
+	})
+	_, out, _ := run(t, m, nil, with("show", "cccc4444")...)
+	for _, want := range []string{"Released", "Fault active for", "45.0s", "6.0s (from release)", "8.0s (from release)", "30.8%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// One-shot runs say nothing about release.
+	_, out, _ = run(t, fixture(), nil, with("show", "aaaa1111-0000")...)
+	if strings.Contains(out, "from release") || strings.Contains(out, "Released") {
+		t.Errorf("PodKill run should not mention release:\n%s", out)
+	}
+}
+
 func TestShowNoProbe(t *testing.T) {
 	_, out, _ := run(t, fixture(), nil, with("show", "aaaa2222-0000")...)
 	if !strings.Contains(out, "no steady-state probe") || !strings.Contains(out, "boom") {

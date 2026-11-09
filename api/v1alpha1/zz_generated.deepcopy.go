@@ -65,7 +65,7 @@ func (in *ChaosExperimentList) DeepCopyObject() runtime.Object {
 func (in *ChaosExperimentSpec) DeepCopyInto(out *ChaosExperimentSpec) {
 	*out = *in
 	in.Target.DeepCopyInto(&out.Target)
-	out.Fault = in.Fault
+	in.Fault.DeepCopyInto(&out.Fault)
 	out.Safety = in.Safety
 	if in.SteadyState != nil {
 		in, out := &in.SteadyState, &out.SteadyState
@@ -74,6 +74,20 @@ func (in *ChaosExperimentSpec) DeepCopyInto(out *ChaosExperimentSpec) {
 	}
 	if in.RecoveryTimeout != nil {
 		in, out := &in.RecoveryTimeout, &out.RecoveryTimeout
+		*out = new(metav1.Duration)
+		**out = **in
+	}
+}
+
+func (in *FaultSpec) DeepCopyInto(out *FaultSpec) {
+	*out = *in
+	in.Params.DeepCopyInto(&out.Params)
+}
+
+func (in *FaultParams) DeepCopyInto(out *FaultParams) {
+	*out = *in
+	if in.Duration != nil {
+		in, out := &in.Duration, &out.Duration
 		*out = new(metav1.Duration)
 		**out = **in
 	}
@@ -113,6 +127,15 @@ func (in *ChaosExperimentStatus) DeepCopyInto(out *ChaosExperimentStatus) {
 	if in.RecoveredAt != nil {
 		in, out := &in.RecoveredAt, &out.RecoveredAt
 		*out = (*in).DeepCopy()
+	}
+	if in.RevertedAt != nil {
+		in, out := &in.RevertedAt, &out.RevertedAt
+		*out = (*in).DeepCopy()
+	}
+	if in.Workload != nil {
+		in, out := &in.Workload, &out.Workload
+		*out = new(WorkloadRef)
+		**out = **in
 	}
 	if in.AffectedPods != nil {
 		in, out := &in.AffectedPods, &out.AffectedPods

@@ -16,8 +16,9 @@ type PodKill struct{}
 
 // Inject deletes each target pod. A pod that is already gone, or whose UID no
 // longer matches, counts as done, which keeps retries safe.
-func (PodKill) Inject(ctx context.Context, c client.Client, namespace string, targets []Target) error {
-	for _, t := range targets {
+func (PodKill) Inject(ctx context.Context, c client.Client, s Spec) error {
+	namespace := s.Namespace
+	for _, t := range s.Targets {
 		uid := types.UID(t.UID)
 		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: t.Name, Namespace: namespace}}
 		err := c.Delete(ctx, pod, client.GracePeriodSeconds(0), client.Preconditions{UID: &uid})
@@ -29,4 +30,4 @@ func (PodKill) Inject(ctx context.Context, c client.Client, namespace string, ta
 }
 
 // Revert is a no-op: a killed pod is recreated by its owner, not by Tremor.
-func (PodKill) Revert(context.Context, client.Client, string, []Target) error { return nil }
+func (PodKill) Revert(context.Context, client.Client, Spec) error { return nil }

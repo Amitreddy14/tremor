@@ -23,3 +23,10 @@ Resolution is bounded by the probe interval (default 1 s), documented in results
 - `podRecoveryMillis` is recorded the first time all pods are Ready again, even if the probe is still catching up.
 - Availability is `probeSuccesses / (probeSuccesses + probeFailures)` over the window from injection to recovery.
 - Time resolution is one probe interval (1 s default).
+
+## Clarification (Phase 5)
+
+- Faults held for a duration (DependencyOutage, CPUStress, MemoryStress) pass through a `Holding` phase. For them both recovery times are measured from the **release** of the fault (`status.revertedAt`), so the duration chosen by the experimenter does not count as recovery time. See ADR 0010.
+- `userImpacted` and availability still look at the whole window from injection to recovery, so an outage that users felt is reported as such.
+- The recovery timeout counts from the release for sustained faults.
+- For stress faults the target pods stay in place, so "recovered" means all pods Ready and, if configured, a stable steady-state probe.

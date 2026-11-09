@@ -1,0 +1,24 @@
+# Burn CPU inside one shop pod for 30 seconds (an ephemeral container runs two
+# busy loops in the pod's cgroup) and see whether users notice.
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: shop-cpu-stress
+  namespace: demo
+spec:
+  target:
+    selector:
+      app: shop
+  fault:
+    type: CPUStress
+    params:
+      count: 1
+      cpuWorkers: 2
+      duration: 30s
+  steadyState:
+    http:
+      url: http://shop.demo.svc.cluster.local:8080/orders
+      expectStatus: 200
+    interval: 1s
+    successThreshold: 3
+  recoveryTimeout: 120s

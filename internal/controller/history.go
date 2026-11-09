@@ -78,6 +78,10 @@ func buildRun(exp *tremorv1.ChaosExperiment, phase engine.Phase, now time.Time, 
 		t := st.RecoveredAt.UTC()
 		run.RecoveredAt = &t
 	}
+	if st.RevertedAt != nil {
+		t := st.RevertedAt.UTC()
+		run.RevertedAt = &t
+	}
 	if exp.Spec.SteadyState != nil {
 		run.SteadyStateURL = exp.Spec.SteadyState.HTTP.URL
 	}

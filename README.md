@@ -2,7 +2,7 @@
 
 A chaos testing platform for Kubernetes. Declare a failure as a `ChaosExperiment`, let the Go operator inject it into your application, and get a measured **recovery time** back, with Prometheus metrics, a Grafana dashboard and a MongoDB run history.
 
-> Status: **Phase 3 (observability)**: `PodKill` experiments report pod recovery and user-visible recovery, with Prometheus metrics and a Grafana dashboard. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phase 5 (dependency and resource faults)**: `PodKill`, `DependencyOutage`, `CPUStress` and `MemoryStress` experiments report pod recovery and user-visible recovery, with Prometheus metrics, a Grafana dashboard, MongoDB run history and the `tremorctl` CLI. Network and node faults come next. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
@@ -75,12 +75,37 @@ Open the **Tremor chaos experiments** dashboard, then run `kubectl apply -f conf
 | `tremor_experiments_total{type,result}` | counter | Finished experiments (`completed`, `failed`, `aborted`, `dry_run`) |
 | `tremor_faults_injected_total{type}` | counter | Faults injected |
 | `tremor_recovery_seconds{type,kind}` | histogram | Recovery time; `kind` is `pod` or `user` |
-| `tremor_experiment_phase{namespace,experiment,phase}` | gauge | 1 for the current phase |
+| `tremor_experiment_phase{namespace,experiment,phase}` | gauge | 1 for the current phase (`Holding` while a sustained fault is active) |
 | `tremor_steady_state_ok{namespace,experiment}` | gauge | Latest probe result while running |
 | `tremor_last_recovery_seconds{namespace,experiment,type,kind}` | gauge | Last completed run |
 | `tremor_last_availability_ratio{namespace,experiment}` | gauge | Passing probes / all probes in the last run |
 
 The metrics endpoint is unauthenticated plain HTTP inside the cluster, which is fine for a local demo; production setups should front it with network policy or TLS.
+
+### Faults
+
+| Fault | What it does | Parameters | Recovery clock starts at |
+| --- | --- | --- | --- |
+| `PodKill` | Force-deletes pods | `count` | injection |
+| `DependencyOutage` | Scales the Deployment or StatefulSet that owns the target pods to zero, then restores it | `duration` (needs `safety.allowTotalOutage: true`) | release |
+| `CPUStress` | Burns CPU inside target pods | `count`, `cpuWorkers`, `duration` | release |
+| `MemoryStress` | Holds memory inside target pods | `count`, `memoryMiB`, `duration` | release |
+
+`duration` defaults to 30s (1s to 10m). Faults with a duration pass through a `Holding` phase; recovery times are measured from the moment the fault is released, so a 45-second outage does not count as 45 seconds of recovery. Availability still covers the whole run.
+
+```bash
+kubectl apply -f config/samples/mongo-outage.yaml       # MongoDB down for 30s, watch the shop go unready
+kubectl apply -f config/samples/shop-cpu-stress.yaml    # two busy loops inside one shop pod
+kubectl apply -f config/samples/shop-memory-stress.yaml # 64 MiB held inside one shop pod
+kubectl -n demo get cx -w
+```
+
+Things to know before you run them on something you care about (details in [ADR 0010](docs/adr/0010-sustained-faults.md)):
+
+- The outage is real: with the demo's `emptyDir` MongoDB the data is gone afterwards. Tremor always restores the replica count, also when you abort or delete the experiment.
+- Stress runs in an ephemeral container (Kubernetes 1.25+). It cannot be stopped early: aborting an experiment ends the experiment, but the stress process runs until its duration is up. Memory stress above the pod's memory limit causes an OOM kill, so pick the size on purpose.
+- The stress image (`busybox:1.36` by default, `--stress-image` to change) must be pullable by the nodes; `make kind-deploy` preloads it into kind.
+- An autoscaler or GitOps tool that scales the dependency back up during an outage ends it early. Pause them for the target.
 
 ### Run history and reports
 
@@ -102,7 +127,7 @@ Every command also accepts `--output json` (history, show) or `--format json` (r
 
 ### Demo shop
 
-`cmd/shop` is a small Go orders API backed by MongoDB (`GET /healthz`, `GET /readyz`, `POST /orders`, `GET /orders`). Readiness depends on the database, so a MongoDB outage takes shop pods out of the Service, which the dependency-outage experiment in Phase 5 will exploit.
+`cmd/shop` is a small Go orders API backed by MongoDB (`GET /healthz`, `GET /readyz`, `POST /orders`, `GET /orders`). Readiness depends on the database, so a MongoDB outage takes shop pods out of the Service, which is what the dependency-outage experiment exploits.
 
 ## Develop
 

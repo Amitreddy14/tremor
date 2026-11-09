@@ -274,6 +274,10 @@ func printRun(w io.Writer, r runstore.Run) {
 	if r.InjectedAt != nil {
 		row("Injected", r.InjectedAt.UTC().Format(time.RFC3339))
 	}
+	if d, ok := r.FaultActive(); ok {
+		row("Released", r.RevertedAt.UTC().Format(time.RFC3339))
+		row("Fault active for", report.FormatMillis(d.Milliseconds()))
+	}
 	if r.RecoveredAt != nil {
 		row("Recovered", r.RecoveredAt.UTC().Format(time.RFC3339))
 	}
@@ -281,12 +285,16 @@ func printRun(w io.Writer, r runstore.Run) {
 	if len(r.AffectedPods) > 0 {
 		row("Affected pods", strings.Join(r.AffectedPods, ", "))
 	}
-	row("Pod recovery", millis(r.PodRecoveryMillis))
+	recoveryFrom := ""
+	if _, ok := r.FaultActive(); ok {
+		recoveryFrom = " (from release)"
+	}
+	row("Pod recovery", millis(r.PodRecoveryMillis)+recoveryFrom)
 	if r.SteadyStateURL == "" {
 		row("User recovery", "- (no steady-state probe)")
 	} else {
 		row("Steady-state URL", r.SteadyStateURL)
-		row("User recovery", millis(r.UserRecoveryMillis))
+		row("User recovery", millis(r.UserRecoveryMillis)+recoveryFrom)
 		row("Users impacted", impacted(r))
 		row("Probes", fmt.Sprintf("%d passed, %d failed", r.ProbeSuccesses, r.ProbeFailures))
 		if a, ok := r.Availability(); ok {
