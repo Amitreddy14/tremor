@@ -70,8 +70,10 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 	case PhaseRecovering:
 		// Recovery is timed from the release of a sustained fault, otherwise
 		// from injection, so a long outage does not inflate the recovery time.
+		// A node drain is released only when the run ends, which says nothing
+		// about when recovery began, so only sustained faults count.
 		start := o.InjectedAt
-		if !o.RevertedAt.IsZero() {
+		if o.Sustained && !o.RevertedAt.IsZero() {
 			start = o.RevertedAt
 		}
 		elapsed := o.Now.Sub(start)

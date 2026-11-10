@@ -291,6 +291,9 @@ func TestFaultClassification(t *testing.T) {
 		{FaultDependencyOutage, true, true},
 		{FaultCPUStress, true, false},
 		{FaultMemoryStress, true, false},
+		{FaultNetworkLatency, true, false},
+		{FaultNetworkLoss, true, false},
+		{FaultNodeDrain, false, true},
 		{"Bogus", false, false},
 	} {
 		if got := IsSustained(tc.fault); got != tc.sustained {
@@ -325,6 +328,20 @@ func TestNormalizeFault(t *testing.T) {
 		{"cpu workers on memory", FaultParams{Type: FaultMemoryStress, CPUWorkers: 2}, FaultParams{}, "cpuWorkers does not apply"},
 		{"memory too big", FaultParams{Type: FaultMemoryStress, MemoryMiB: 1 << 20}, FaultParams{}, "memoryMiB must be between"},
 		{"memory on cpu", FaultParams{Type: FaultCPUStress, MemoryMiB: 64}, FaultParams{}, "memoryMiB does not apply"},
+		{"latency defaults", FaultParams{Type: FaultNetworkLatency}, FaultParams{Type: FaultNetworkLatency, Duration: 30 * time.Second, Latency: 200 * time.Millisecond}, ""},
+		{"latency explicit", FaultParams{Type: FaultNetworkLatency, Count: 1, Latency: time.Second, Jitter: 100 * time.Millisecond, Duration: time.Minute}, FaultParams{Type: FaultNetworkLatency, Count: 1, Latency: time.Second, Jitter: 100 * time.Millisecond, Duration: time.Minute}, ""},
+		{"latency too high", FaultParams{Type: FaultNetworkLatency, Latency: time.Minute}, FaultParams{}, "latency must be between"},
+		{"jitter above latency", FaultParams{Type: FaultNetworkLatency, Latency: 100 * time.Millisecond, Jitter: time.Second}, FaultParams{}, "jitter must be between"},
+		{"latency on loss", FaultParams{Type: FaultNetworkLoss, Latency: time.Second}, FaultParams{}, "latency does not apply"},
+		{"jitter on cpu", FaultParams{Type: FaultCPUStress, Jitter: time.Second}, FaultParams{}, "jitter does not apply"},
+		{"loss defaults", FaultParams{Type: FaultNetworkLoss}, FaultParams{Type: FaultNetworkLoss, Duration: 30 * time.Second, LossPercent: 20}, ""},
+		{"loss explicit", FaultParams{Type: FaultNetworkLoss, LossPercent: 100, Duration: 5 * time.Second}, FaultParams{Type: FaultNetworkLoss, LossPercent: 100, Duration: 5 * time.Second}, ""},
+		{"loss too high", FaultParams{Type: FaultNetworkLoss, LossPercent: 101}, FaultParams{}, "lossPercent must be between"},
+		{"loss negative", FaultParams{Type: FaultNetworkLoss, LossPercent: -5}, FaultParams{}, "lossPercent must be between"},
+		{"loss on latency", FaultParams{Type: FaultNetworkLatency, LossPercent: 5}, FaultParams{}, "lossPercent does not apply"},
+		{"drain as is", FaultParams{Type: FaultNodeDrain}, FaultParams{Type: FaultNodeDrain}, ""},
+		{"drain rejects count", FaultParams{Type: FaultNodeDrain, Count: 1}, FaultParams{}, "count does not apply"},
+		{"drain rejects duration", FaultParams{Type: FaultNodeDrain, Duration: time.Minute}, FaultParams{}, "duration does not apply"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -342,5 +359,75 @@ func TestNormalizeFault(t *testing.T) {
 				t.Fatalf("got %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNeedsReleaseAndIsNetwork(t *testing.T) {
+	for f, want := range map[string]bool{
+		FaultPodKill: false, FaultDependencyOutage: true, FaultCPUStress: true, FaultMemoryStress: true,
+		FaultNetworkLatency: true, FaultNetworkLoss: true, FaultNodeDrain: true, "Bogus": false,
+	} {
+		if got := NeedsRelease(f); got != want {
+			t.Errorf("NeedsRelease(%s) = %v, want %v", f, got, want)
+		}
+	}
+	if !IsNetwork(FaultNetworkLatency) || !IsNetwork(FaultNetworkLoss) || IsNetwork(FaultNodeDrain) {
+		t.Error("IsNetwork misclassifies a fault")
+	}
+}
+
+func TestPickDrainNode(t *testing.T) {
+	spare := SafetyPolicy{MaxAffectedPercent: 100}
+	tests := []struct {
+		name    string
+		loads   []NodeLoad
+		total   int
+		policy  SafetyPolicy
+		want    string
+		wantErr bool
+	}{
+		{"most pods wins", []NodeLoad{{"w1", 1}, {"w2", 2}}, 3, spare, "w2", false},
+		{"tie goes to lowest name", []NodeLoad{{"w2", 1}, {"w1", 1}}, 2, spare, "w1", false},
+		{"never drains every pod", []NodeLoad{{"w1", 2}}, 2, spare, "", true},
+		{"total outage allowed", []NodeLoad{{"w1", 2}}, 2, SafetyPolicy{MaxAffectedPercent: 100, AllowTotalOutage: true}, "w1", false},
+		{"percent cap skips big node", []NodeLoad{{"w1", 2}, {"w2", 1}}, 4, SafetyPolicy{MaxAffectedPercent: 25}, "w2", false},
+		{"default cap is half", []NodeLoad{{"w1", 3}, {"w2", 2}, {"w3", 1}}, 6, SafetyPolicy{}, "w1", false},
+		{"default cap blocks majority", []NodeLoad{{"w1", 3}}, 4, SafetyPolicy{}, "", true},
+		{"ignores unscheduled and empty", []NodeLoad{{"", 2}, {"w1", 0}, {"w2", 1}}, 3, spare, "w2", false},
+		{"no nodes", nil, 3, spare, "", true},
+		{"no pods", []NodeLoad{{"w1", 1}}, 0, spare, "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := PickDrainNode(tt.loads, tt.total, tt.policy)
+			if tt.wantErr {
+				if !errors.Is(err, ErrNoSafeTarget) {
+					t.Fatalf("err = %v, want ErrNoSafeTarget", err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRevertedAtOnlyStartsClockForSustainedFaults(t *testing.T) {
+	now := time.Now()
+	obs := Observation{
+		Now: now, InjectedAt: now.Add(-100 * time.Second), RevertedAt: now.Add(-1 * time.Second),
+		TotalPods: 2, ReadyPods: 1, BaselineReady: 2, AffectedStillPresent: true,
+	}
+	cfg := Config{RecoveryTimeout: 90 * time.Second}
+
+	// Not sustained (node drain): the clock runs from injection, so 100s > 90s.
+	if d := Decide(PhaseRecovering, obs, cfg); d.Next != PhaseFailed {
+		t.Fatalf("non-sustained: got %s, want Failed", d.Next)
+	}
+	// Sustained: the clock runs from the release 1s ago.
+	obs.Sustained = true
+	if d := Decide(PhaseRecovering, obs, cfg); d.Next != PhaseRecovering {
+		t.Fatalf("sustained: got %s, want Recovering", d.Next)
 	}
 }

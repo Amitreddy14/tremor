@@ -15,6 +15,15 @@ spec:
       labels:
         app: shop
     spec:
+      # Spread the replicas over nodes when there is a choice, so that draining
+      # one node (NodeDrain) leaves the shop with pods elsewhere.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: shop
       securityContext:
         runAsNonRoot: true
         seccompProfile:

@@ -19,6 +19,14 @@ rules:
   - apiGroups: [""]
     resources: [pods/ephemeralcontainers]
     verbs: [update, patch]
+  # NetworkLatency and NetworkLoss need no extra rights: they use the same
+  # ephemeral containers. NodeDrain cordons a node and evicts pods from it.
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, patch]
   # DependencyOutage scales a Deployment or StatefulSet to zero and back.
   - apiGroups: [apps]
     resources: [deployments, statefulsets]

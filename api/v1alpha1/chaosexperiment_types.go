@@ -5,7 +5,7 @@ import (
 )
 
 // FaultType names a kind of failure Tremor can inject.
-// +kubebuilder:validation:Enum=PodKill;DependencyOutage;CPUStress;MemoryStress
+// +kubebuilder:validation:Enum=PodKill;DependencyOutage;CPUStress;MemoryStress;NetworkLatency;NetworkLoss;NodeDrain
 type FaultType string
 
 const (
@@ -18,6 +18,14 @@ const (
 	FaultCPUStress FaultType = "CPUStress"
 	// FaultMemoryStress holds memory inside target pods for a duration.
 	FaultMemoryStress FaultType = "MemoryStress"
+	// FaultNetworkLatency delays the traffic leaving target pods for a duration.
+	FaultNetworkLatency FaultType = "NetworkLatency"
+	// FaultNetworkLoss drops a share of the traffic leaving target pods for a
+	// duration.
+	FaultNetworkLoss FaultType = "NetworkLoss"
+	// FaultNodeDrain cordons the node hosting target pods and evicts them, as a
+	// node maintenance or failure would.
+	FaultNodeDrain FaultType = "NodeDrain"
 )
 
 // Phase is the lifecycle phase of an experiment.
@@ -51,7 +59,7 @@ type FaultParams struct {
 	// +optional
 	Count int32 `json:"count,omitempty"`
 	// Duration is how long a sustained fault (DependencyOutage, CPUStress,
-	// MemoryStress) stays active. Default 30s, between 1s and 10m.
+	// MemoryStress, NetworkLatency, NetworkLoss) stays active. Default 30s, between 1s and 10m.
 	// +optional
 	Duration *metav1.Duration `json:"duration,omitempty"`
 	// CPUWorkers is the number of busy loops per pod for CPUStress (default 1).
@@ -64,6 +72,18 @@ type FaultParams struct {
 	// +kubebuilder:validation:Maximum=16384
 	// +optional
 	MemoryMiB int32 `json:"memoryMiB,omitempty"`
+	// Latency is the delay added by NetworkLatency (default 200ms, up to 10s).
+	// +optional
+	Latency *metav1.Duration `json:"latency,omitempty"`
+	// Jitter is the random variation of the delay, at most the latency
+	// (NetworkLatency only, default none).
+	// +optional
+	Jitter *metav1.Duration `json:"jitter,omitempty"`
+	// LossPercent is the share of packets NetworkLoss drops (default 20).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	LossPercent int32 `json:"lossPercent,omitempty"`
 }
 
 // FaultSpec describes the failure to inject.
@@ -159,6 +179,8 @@ type ChaosExperimentStatus struct {
 	RevertedAt *metav1.MicroTime `json:"revertedAt,omitempty"`
 	// Workload is the workload a DependencyOutage scaled down.
 	Workload *WorkloadRef `json:"workload,omitempty"`
+	// Node is the node a NodeDrain cordoned and evicted pods from.
+	Node string `json:"node,omitempty"`
 
 	// BaselineReadyPods is the ready pod count before injection.
 	BaselineReadyPods int32 `json:"baselineReadyPods,omitempty"`

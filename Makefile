@@ -3,6 +3,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 IMG     ?= tremor-manager:dev
 IMG_SHOP ?= tremor-shop:dev
 IMG_STRESS ?= busybox:1.36
+IMG_NETEM ?= tremor-netem:dev
 LDFLAGS := -X github.com/Amitreddy14/tremor/internal/version.Version=$(VERSION) \
            -X github.com/Amitreddy14/tremor/internal/version.Commit=$(COMMIT)
 
@@ -13,7 +14,7 @@ ENVTEST_K8S    ?= 1.31.0
 KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
-        docker-build-shop demo-deploy demo-undeploy \
+        docker-build-shop docker-build-netem netem-load demo-deploy demo-undeploy e2e-faults \
         monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy history-forward tremorctl e2e undeploy
 
 help: ## Show targets
@@ -57,6 +58,12 @@ docker-build: ## Build the operator image
 docker-build-shop: ## Build the demo shop image
 	docker build --build-arg TARGET=shop --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) -t $(IMG_SHOP) .
 
+docker-build-netem: ## Build the image that runs network faults (tc/netem)
+	docker build -f Dockerfile.netem -t $(IMG_NETEM) .
+
+netem-load: docker-build-netem ## Build the netem image and load it into kind
+	kind load docker-image $(IMG_NETEM) --name $(KIND_CLUSTER)
+
 demo-deploy: docker-build-shop ## Build the shop, load into kind, deploy shop + MongoDB
 	kind load docker-image $(IMG_SHOP) --name $(KIND_CLUSTER)
 	kubectl apply -k config/demo
@@ -91,6 +98,9 @@ tremorctl: ## Build the tremorctl CLI into ./bin
 
 e2e: ## Run the end-to-end script (run demo-deploy first)
 	bash ./hack/e2e.sh
+
+e2e-faults: ## Network and node fault checks (run demo-deploy, kind-deploy and netem-load first)
+	bash ./hack/e2e-faults.sh
 
 monitoring-up: ## Install kube-prometheus-stack (Prometheus + Grafana) into kind via Helm
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update

@@ -98,7 +98,7 @@ func bootEnv() (client.Client, error) {
 		Metrics: metricsserver.Options{BindAddress: "0"},
 		// Same as cmd/manager: read workloads uncached so Revert sees Inject.
 		Client: client.Options{Cache: &client.CacheOptions{
-			DisableFor: []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}},
+			DisableFor: []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}, &corev1.Node{}},
 		}},
 	})
 	if err != nil {
@@ -117,6 +117,7 @@ func bootEnv() (client.Client, error) {
 		ClusterName:     "test",
 		OperatorVersion: "vtest",
 		StressImage:     "busybox:test",
+		NetemImage:      "netem:test",
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
 		return nil, err

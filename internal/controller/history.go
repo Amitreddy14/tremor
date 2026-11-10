@@ -78,7 +78,9 @@ func buildRun(exp *tremorv1.ChaosExperiment, phase engine.Phase, now time.Time, 
 		t := st.RecoveredAt.UTC()
 		run.RecoveredAt = &t
 	}
-	if st.RevertedAt != nil {
+	// Only sustained faults record a release: a node drain is uncordoned when the
+	// run ends, which says nothing about when recovery began.
+	if st.RevertedAt != nil && engine.IsSustained(string(exp.Spec.Fault.Type)) {
 		t := st.RevertedAt.UTC()
 		run.RevertedAt = &t
 	}
