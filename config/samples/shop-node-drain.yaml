@@ -1,0 +1,29 @@
+# Drain the node that runs the most shop pods, as node maintenance or a node
+# failure would: the node is cordoned, the shop pods on it are evicted, and the
+# node stays closed until the run ends so the pods cannot come back to it.
+#
+# Needs a cluster with at least two workers (make kind-up, not kind-up-lite),
+# and the shop replicas on more than one of them. Tremor refuses to drain every
+# replica unless safety.allowTotalOutage is set.
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: shop-node-drain
+  namespace: demo
+spec:
+  target:
+    selector:
+      app: shop
+  fault:
+    type: NodeDrain
+  safety:
+    # A node may host most of the replicas, so lift the default 50 percent cap.
+    # One replica is still always spared.
+    maxAffectedPercent: 100
+  steadyState:
+    http:
+      url: http://shop.demo.svc.cluster.local:8080/orders
+      expectStatus: 200
+    interval: 1s
+    successThreshold: 3
+  recoveryTimeout: 180s

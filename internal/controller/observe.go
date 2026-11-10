@@ -116,10 +116,17 @@ func faultParams(exp *tremorv1.ChaosExperiment) engine.FaultParams {
 		Count:            int(p.Count),
 		CPUWorkers:       int(p.CPUWorkers),
 		MemoryMiB:        int(p.MemoryMiB),
+		LossPercent:      int(p.LossPercent),
 		AllowTotalOutage: exp.Spec.Safety.AllowTotalOutage,
 	}
 	if p.Duration != nil {
 		fp.Duration = p.Duration.Duration
+	}
+	if p.Latency != nil {
+		fp.Latency = p.Latency.Duration
+	}
+	if p.Jitter != nil {
+		fp.Jitter = p.Jitter.Duration
 	}
 	return fp
 }
@@ -127,12 +134,16 @@ func faultParams(exp *tremorv1.ChaosExperiment) engine.FaultParams {
 // faultSpec collects what an injector needs from the experiment and its status.
 func faultSpec(exp *tremorv1.ChaosExperiment, fp engine.FaultParams) fault.Spec {
 	s := fault.Spec{
-		Namespace:  exp.Namespace,
-		Targets:    toTargets(exp.Status.AffectedPods),
-		Holder:     string(exp.UID),
-		Duration:   fp.Duration,
-		CPUWorkers: fp.CPUWorkers,
-		MemoryMiB:  fp.MemoryMiB,
+		Namespace:   exp.Namespace,
+		Targets:     toTargets(exp.Status.AffectedPods),
+		Holder:      string(exp.UID),
+		Node:        exp.Status.Node,
+		Duration:    fp.Duration,
+		CPUWorkers:  fp.CPUWorkers,
+		MemoryMiB:   fp.MemoryMiB,
+		Latency:     fp.Latency,
+		Jitter:      fp.Jitter,
+		LossPercent: fp.LossPercent,
 	}
 	if w := exp.Status.Workload; w != nil {
 		s.Workload = fault.Workload{Kind: w.Kind, Name: w.Name}

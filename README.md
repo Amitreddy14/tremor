@@ -90,6 +90,9 @@ The metrics endpoint is unauthenticated plain HTTP inside the cluster, which is 
 | `DependencyOutage` | Scales the Deployment or StatefulSet that owns the target pods to zero, then restores it | `duration` (needs `safety.allowTotalOutage: true`) | release |
 | `CPUStress` | Burns CPU inside target pods | `count`, `cpuWorkers`, `duration` | release |
 | `MemoryStress` | Holds memory inside target pods | `count`, `memoryMiB`, `duration` | release |
+| `NetworkLatency` | Delays the traffic leaving target pods (tc netem) | `count`, `latency`, `jitter`, `duration` | release |
+| `NetworkLoss` | Drops a share of the traffic leaving target pods (tc netem) | `count`, `lossPercent`, `duration` | release |
+| `NodeDrain` | Cordons the node running the most target pods and evicts them, uncordons when the run ends | none (picks the node itself) | injection |
 
 `duration` defaults to 30s (1s to 10m). Faults with a duration pass through a `Holding` phase; recovery times are measured from the moment the fault is released, so a 45-second outage does not count as 45 seconds of recovery. Availability still covers the whole run.
 
@@ -97,6 +100,9 @@ The metrics endpoint is unauthenticated plain HTTP inside the cluster, which is 
 kubectl apply -f config/samples/mongo-outage.yaml       # MongoDB down for 30s, watch the shop go unready
 kubectl apply -f config/samples/shop-cpu-stress.yaml    # two busy loops inside one shop pod
 kubectl apply -f config/samples/shop-memory-stress.yaml # 64 MiB held inside one shop pod
+kubectl apply -f config/samples/shop-network-latency.yaml # 1.5 s added to one shop pod's traffic (needs make netem-load)
+kubectl apply -f config/samples/shop-packet-loss.yaml   # 60% of one shop pod's packets dropped (needs make netem-load)
+kubectl apply -f config/samples/shop-node-drain.yaml    # drain a worker (needs make kind-up with two workers)
 kubectl -n demo get cx -w
 ```
 
@@ -106,6 +112,8 @@ Things to know before you run them on something you care about (details in [ADR 
 - Stress runs in an ephemeral container (Kubernetes 1.25+). It cannot be stopped early: aborting an experiment ends the experiment, but the stress process runs until its duration is up. Memory stress above the pod's memory limit causes an OOM kill, so pick the size on purpose.
 - The stress image (`busybox:1.36` by default, `--stress-image` to change) must be pullable by the nodes; `make kind-deploy` preloads it into kind.
 - An autoscaler or GitOps tool that scales the dependency back up during an outage ends it early. Pause them for the target.
+- Network faults add a `tc netem` rule to the pod's own interface from an ephemeral container with the `NET_ADMIN` capability, so the namespace must allow that (not the `restricted` Pod Security level) and the node kernel needs the `sch_netem` module. They shape what the pod *sends*, so callers see slow or lost responses. They use their own small image (`tremor-netem:dev`, `--netem-image` to change, `make netem-load` for kind). Unlike stress, an early end works: abort or delete removes the rule within a second.
+- A node drain needs somewhere for the pods to go: use the two-worker kind cluster (`make kind-up`). Tremor refuses to drain a node if that would take every replica down or exceed `maxAffectedPercent`, and an eviction that a PodDisruptionBudget refuses fails the run with that message. The node is cordoned while the run lasts and always handed back as it was found.
 
 ### Run history and reports
 

@@ -9,8 +9,8 @@ Built in phases. Each phase is a branch, a PR, green CI, and a tag.
 | 2 | Demo app and recovery measurement | Go shop API + MongoDB manifests, HTTP steady-state prober, recovery-time calculation | Done |
 | 3 | Observability | Prometheus metrics, ServiceMonitor, Grafana dashboard | Done |
 | 4 | Result store and CLI | MongoDB run history, `tremorctl` history, show and report | Done |
-| 5 | Dependency and resource faults | DependencyOutage, CPUStress, MemoryStress, `Holding` phase | Delivered, awaiting merge |
-| 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | |
+| 5 | Dependency and resource faults | DependencyOutage, CPUStress, MemoryStress, `Holding` phase | Done |
+| 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | Delivered, awaiting merge |
 | 7 | Safety and scheduling | Namespace allowlist, blast radius, dry-run, abort, `ChaosSchedule` | |
 | 8 | Ship it | Helm chart, kind e2e in CI, free deployment guide, README with real measured results | |
 

@@ -30,9 +30,15 @@ type Spec struct {
 	// Revert idempotent.
 	Holder string
 
-	Duration   time.Duration
-	CPUWorkers int
-	MemoryMiB  int
+	// Node is the node a NodeDrain cordons and evicts from.
+	Node string
+
+	Duration    time.Duration
+	CPUWorkers  int
+	MemoryMiB   int
+	Latency     time.Duration
+	Jitter      time.Duration
+	LossPercent int
 }
 
 // Injector applies and reverts one fault type. Inject and Revert must be
@@ -55,6 +61,8 @@ type Sustained interface {
 type Options struct {
 	// StressImage runs CPU and memory stress; DefaultStressImage when empty.
 	StressImage string
+	// NetemImage runs network faults; DefaultNetemImage when empty.
+	NetemImage string
 }
 
 // For returns the injector registered for a fault type.
@@ -62,6 +70,10 @@ func For(faultType string, o Options) (Injector, bool) {
 	image := o.StressImage
 	if image == "" {
 		image = DefaultStressImage
+	}
+	netemImage := o.NetemImage
+	if netemImage == "" {
+		netemImage = DefaultNetemImage
 	}
 	switch faultType {
 	case "PodKill":
@@ -72,6 +84,12 @@ func For(faultType string, o Options) (Injector, bool) {
 		return CPUStress{Image: image}, true
 	case "MemoryStress":
 		return MemoryStress{Image: image}, true
+	case "NetworkLatency":
+		return NetworkLatency{Image: netemImage}, true
+	case "NetworkLoss":
+		return NetworkLoss{Image: netemImage}, true
+	case "NodeDrain":
+		return NodeDrain{}, true
 	default:
 		return nil, false
 	}

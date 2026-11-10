@@ -91,6 +91,16 @@ func (in *FaultParams) DeepCopyInto(out *FaultParams) {
 		*out = new(metav1.Duration)
 		**out = **in
 	}
+	if in.Latency != nil {
+		in, out := &in.Latency, &out.Latency
+		*out = new(metav1.Duration)
+		**out = **in
+	}
+	if in.Jitter != nil {
+		in, out := &in.Jitter, &out.Jitter
+		*out = new(metav1.Duration)
+		**out = **in
+	}
 }
 
 func (in *SteadyStateSpec) DeepCopyInto(out *SteadyStateSpec) {

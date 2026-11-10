@@ -63,3 +63,13 @@ jobs:
           cache: true
       - name: end-to-end pod kill, user-visible recovery and run history
         run: make e2e
+      # Network faults need the sch_netem kernel module on the runner (kind nodes
+      # share the host kernel). This step is informational: a runner image that
+      # lacks the module must not block a merge. NodeDrain is skipped here
+      # because the CI cluster has a single worker.
+      - name: network fault checks (informational)
+        continue-on-error: true
+        run: |
+          sudo modprobe sch_netem || { sudo apt-get update && sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe sch_netem; }
+          make netem-load KIND_CLUSTER=tremor
+          make e2e-faults

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -38,6 +39,7 @@ func main() {
 		historyURI  string
 		clusterName string
 		stressImage string
+		netemImage  string
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the Prometheus metrics endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe endpoint binds to")
@@ -49,6 +51,8 @@ func main() {
 		"label stored with each run (default $TREMOR_CLUSTER_NAME)")
 	flag.StringVar(&stressImage, "stress-image", fault.DefaultStressImage,
 		"image for CPU and memory stress containers; needs sh, yes, sleep, kill and dd (BusyBox has them)")
+	flag.StringVar(&netemImage, "netem-image", fault.DefaultNetemImage,
+		"image for network latency and loss containers; needs sh, ip, tc (with netem), awk and grep (see Dockerfile.netem)")
 	zapOpts := zap.Options{}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -67,11 +71,12 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
-		// DependencyOutage must see its own writes: a cached read just after
-		// scaling a workload down could miss the hold marker and skip the
-		// restore. These kinds are rarely read, so go straight to the API server.
+		// DependencyOutage and NodeDrain must see their own writes: a cached
+		// read just after scaling a workload down or cordoning a node could miss
+		// the hold marker and skip the restore. These kinds are rarely read, so
+		// go straight to the API server (which also needs no node watch).
 		Client: client.Options{Cache: &client.CacheOptions{
-			DisableFor: []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}},
+			DisableFor: []client.Object{&appsv1.Deployment{}, &appsv1.StatefulSet{}, &corev1.Node{}},
 		}},
 		Metrics:                metricsserver.Options{BindAddress: metricsAddr},
 		HealthProbeBindAddress: probeAddr,
@@ -111,6 +116,7 @@ func main() {
 		ClusterName:     clusterName,
 		OperatorVersion: version.Version,
 		StressImage:     stressImage,
+		NetemImage:      netemImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller")
 		os.Exit(1)

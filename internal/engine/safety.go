@@ -78,3 +78,45 @@ func ValidateSelector(sel map[string]string) error {
 	}
 	return nil
 }
+
+// NodeLoad is how many of a workload's pods run on one node.
+type NodeLoad struct {
+	Node string
+	Pods int
+}
+
+// PickDrainNode chooses the node to drain: among the nodes whose pods may all
+// be evicted within the safety limits (the same limits KillCount applies to a
+// single pod), the one hosting the most pods, then the lowest name. total is
+// the workload's pod count. Nodes with no pods, or no known name (pods not yet
+// scheduled), are never chosen.
+func PickDrainNode(loads []NodeLoad, total int, p SafetyPolicy) (string, error) {
+	best := NodeLoad{}
+	for _, l := range loads {
+		if l.Node == "" || l.Pods < 1 {
+			continue
+		}
+		n, err := KillCount(total, l.Pods, p)
+		if err != nil || n < l.Pods {
+			continue // draining this node would exceed the limits
+		}
+		if best.Node == "" || l.Pods > best.Pods || (l.Pods == best.Pods && l.Node < best.Node) {
+			best = l
+		}
+	}
+	if best.Node == "" {
+		return "", fmt.Errorf("%w: no node can be drained without exceeding the limits (%d pod(s), max %d%%, sparing one pod unless allowTotalOutage)",
+			ErrNoSafeTarget, total, effectivePercent(p))
+	}
+	return best.Node, nil
+}
+
+func effectivePercent(p SafetyPolicy) int {
+	switch {
+	case p.MaxAffectedPercent < 1:
+		return defaultMaxAffectedPercent
+	case p.MaxAffectedPercent > 100:
+		return 100
+	}
+	return p.MaxAffectedPercent
+}

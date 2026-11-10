@@ -3,6 +3,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"time"
@@ -55,6 +56,8 @@ type ChaosExperimentReconciler struct {
 	OperatorVersion string
 	// StressImage runs CPU and memory stress; fault.DefaultStressImage if empty.
 	StressImage string
+	// NetemImage runs network faults; fault.DefaultNetemImage if empty.
+	NetemImage string
 }
 
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments,verbs=get;list;watch;update;patch
@@ -62,6 +65,8 @@ type ChaosExperimentReconciler struct {
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups="",resources=pods/ephemeralcontainers,verbs=update;patch
+// +kubebuilder:rbac:groups="",resources=pods/eviction,verbs=create
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
@@ -148,7 +153,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	switch d.Action {
 	case engine.ActionPlan, engine.ActionDryRun:
-		affected, workload, err := r.plan(ctx, &exp, pods, fp)
+		affected, workload, node, err := r.plan(ctx, &exp, pods, fp)
 		if err != nil {
 			return r.fail(ctx, &exp, err.Error())
 		}
@@ -157,15 +162,24 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if workload != nil {
 			exp.Status.Workload = workload
 		}
+		exp.Status.Node = node
 		if d.Action == engine.ActionDryRun {
 			d.Message = fmt.Sprintf("dry run: would disturb %d pod(s): %s", len(affected), podNames(affected))
 			if workload != nil {
 				d.Message += fmt.Sprintf(" by taking down %s/%s", workload.Kind, workload.Name)
 			}
+			if node != "" {
+				d.Message += fmt.Sprintf(" by draining node %s", node)
+			}
 		}
 
 	case engine.ActionInject:
 		if err := injector.Inject(ctx, r.Client, spec); err != nil {
+			if errors.Is(err, fault.ErrBlocked) {
+				// Refused by the cluster (a PodDisruptionBudget, say): release
+				// what was done so far and report it as the result.
+				return r.failAfterFault(ctx, &exp, injector, spec, err.Error())
+			}
 			// Injection is idempotent, so returning the error retries safely.
 			return ctrl.Result{}, err
 		}
@@ -182,15 +196,19 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		exp.Status.RevertedAt = &t
 	}
 
-	// Never leave a sustained fault behind: if the run ends badly (failure or
-	// abort) while the fault is active, release it before recording the end.
-	if sustained && exp.Status.InjectedAt != nil && exp.Status.RevertedAt == nil &&
-		(d.Next == engine.PhaseFailed || d.Next == engine.PhaseAborted) {
+	// Never leave a fault behind. A sustained fault is released when the run
+	// ends badly (failure or abort) while it is active; a node drain keeps its
+	// node cordoned until the run is over, however it ends. Release is
+	// idempotent, so it is safe even if the fault was only partly injected.
+	injecting := phase == engine.PhaseInjecting || phase == engine.PhaseHolding || phase == engine.PhaseRecovering
+	if engine.NeedsRelease(fp.Type) && injecting && exp.Status.RevertedAt == nil && engine.IsTerminal(d.Next) {
 		if err := injector.Revert(ctx, r.Client, spec); err != nil {
 			return ctrl.Result{}, err
 		}
-		t := metav1.NewMicroTime(r.now())
-		exp.Status.RevertedAt = &t
+		if exp.Status.InjectedAt != nil {
+			t := metav1.NewMicroTime(r.now())
+			exp.Status.RevertedAt = &t
+		}
 	}
 
 	// Record pod-level recovery the first time pods are seen recovered, even
@@ -210,7 +228,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			// For sustained faults users are "recovered" relative to the
 			// release of the fault, not its start (ADR 0003).
 			clockStart := exp.Status.InjectedAt.Time
-			if exp.Status.RevertedAt != nil {
+			if sustained && exp.Status.RevertedAt != nil {
 				clockStart = exp.Status.RevertedAt.Time
 			}
 			var userMs int64
@@ -299,7 +317,7 @@ func (r *ChaosExperimentReconciler) failAfterFault(ctx context.Context, exp *tre
 }
 
 func (r *ChaosExperimentReconciler) injector(exp *tremorv1.ChaosExperiment) (fault.Injector, bool) {
-	return fault.For(string(exp.Spec.Fault.Type), fault.Options{StressImage: r.StressImage})
+	return fault.For(string(exp.Spec.Fault.Type), fault.Options{StressImage: r.StressImage, NetemImage: r.NetemImage})
 }
 
 func (r *ChaosExperimentReconciler) now() time.Time {
@@ -329,9 +347,10 @@ func (r *ChaosExperimentReconciler) listPods(ctx context.Context, exp *tremorv1.
 
 // plan applies the safety rules and picks the pods to disturb. For a
 // DependencyOutage it selects every pod and also resolves the workload that
-// will be taken down.
+// will be taken down; for a NodeDrain it picks the node and selects the pods
+// running on it.
 func (r *ChaosExperimentReconciler) plan(ctx context.Context, exp *tremorv1.ChaosExperiment,
-	pods []corev1.Pod, fp engine.FaultParams) ([]tremorv1.AffectedPod, *tremorv1.WorkloadRef, error) {
+	pods []corev1.Pod, fp engine.FaultParams) ([]tremorv1.AffectedPod, *tremorv1.WorkloadRef, string, error) {
 	var ready []corev1.Pod
 	for i := range pods {
 		if isReady(&pods[i]) && pods[i].DeletionTimestamp.IsZero() {
@@ -339,27 +358,33 @@ func (r *ChaosExperimentReconciler) plan(ctx context.Context, exp *tremorv1.Chao
 		}
 	}
 	if len(ready) == 0 {
-		return nil, nil, engine.ErrNoSafeTarget
+		return nil, nil, "", engine.ErrNoSafeTarget
 	}
 
 	if fp.Type == engine.FaultDependencyOutage {
 		wl, err := fault.ResolveWorkload(ctx, r.Client, exp.Namespace, ready)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, "", err
 		}
 		affected := make([]tremorv1.AffectedPod, 0, len(ready))
 		for i := range ready {
 			affected = append(affected, tremorv1.AffectedPod{Name: ready[i].Name, UID: string(ready[i].UID)})
 		}
-		return affected, &tremorv1.WorkloadRef{Kind: wl.Kind, Name: wl.Name}, nil
+		return affected, &tremorv1.WorkloadRef{Kind: wl.Kind, Name: wl.Name}, "", nil
 	}
 
-	n, err := engine.KillCount(len(pods), fp.Count, engine.SafetyPolicy{
+	policy := engine.SafetyPolicy{
 		MaxAffectedPercent: int(exp.Spec.Safety.MaxAffectedPercent),
 		AllowTotalOutage:   exp.Spec.Safety.AllowTotalOutage,
-	})
+	}
+
+	if fp.Type == engine.FaultNodeDrain {
+		return planDrain(pods, policy)
+	}
+
+	n, err := engine.KillCount(len(pods), fp.Count, policy)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, "", err
 	}
 
 	uids := map[string]string{}
@@ -380,9 +405,35 @@ func (r *ChaosExperimentReconciler) plan(ctx context.Context, exp *tremorv1.Chao
 		affected = append(affected, tremorv1.AffectedPod{Name: name, UID: uids[name]})
 	}
 	if len(affected) == 0 {
-		return nil, nil, engine.ErrNoSafeTarget
+		return nil, nil, "", engine.ErrNoSafeTarget
 	}
-	return affected, nil, nil
+	return affected, nil, "", nil
+}
+
+// planDrain picks the node to drain and selects the workload's pods on it.
+// Pods without a node (not yet scheduled) are never targets.
+func planDrain(pods []corev1.Pod, policy engine.SafetyPolicy) ([]tremorv1.AffectedPod, *tremorv1.WorkloadRef, string, error) {
+	count := map[string]int{}
+	for i := range pods {
+		if pods[i].DeletionTimestamp.IsZero() && pods[i].Spec.NodeName != "" {
+			count[pods[i].Spec.NodeName]++
+		}
+	}
+	loads := make([]engine.NodeLoad, 0, len(count))
+	for node, n := range count {
+		loads = append(loads, engine.NodeLoad{Node: node, Pods: n})
+	}
+	node, err := engine.PickDrainNode(loads, len(pods), policy)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var affected []tremorv1.AffectedPod
+	for i := range pods {
+		if pods[i].Spec.NodeName == node && pods[i].DeletionTimestamp.IsZero() {
+			affected = append(affected, tremorv1.AffectedPod{Name: pods[i].Name, UID: string(pods[i].UID)})
+		}
+	}
+	return affected, nil, node, nil
 }
 
 // SetupWithManager registers the controller and a pod watch so experiments

@@ -1,0 +1,28 @@
+# Drop 60 percent of the packets one shop pod sends, for 30 seconds. TCP hides
+# loss with retransmissions, so the symptom is slowness and timeouts rather
+# than clean errors.
+#
+# Needs the tremor-netem image on the nodes (make netem-load) and a node kernel
+# with the sch_netem module.
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosExperiment
+metadata:
+  name: shop-packet-loss
+  namespace: demo
+spec:
+  target:
+    selector:
+      app: shop
+  fault:
+    type: NetworkLoss
+    params:
+      count: 1
+      lossPercent: 60
+      duration: 30s
+  steadyState:
+    http:
+      url: http://shop.demo.svc.cluster.local:8080/orders
+      expectStatus: 200
+    interval: 1s
+    successThreshold: 3
+  recoveryTimeout: 120s

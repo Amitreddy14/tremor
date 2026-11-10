@@ -1,0 +1,6 @@
+# syntax=docker/dockerfile:1
+# Image for NetworkLatency and NetworkLoss. The fault runs as an ephemeral
+# container inside the target pod and needs tc (with netem), ip, awk and grep.
+# BusyBox's own tc has no netem support, so BusyBox is not enough here.
+FROM alpine:3.20
+RUN apk add --no-cache iproute2
