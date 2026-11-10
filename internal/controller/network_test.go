@@ -450,9 +450,14 @@ func TestNodeDrainBlockedByBudget(t *testing.T) {
 	if msg := getExperiment(t, c, exp.Name).Status.Message; !strings.Contains(msg, "eviction blocked") {
 		t.Errorf("message = %q, want it to say the eviction was blocked", msg)
 	}
-	if n := getNode(t, c, "drain-pdb-a"); n.Spec.Unschedulable || len(n.Annotations) != 0 {
-		t.Errorf("a refused drain left the node cordoned: unschedulable=%v annotations=%v", n.Spec.Unschedulable, n.Annotations)
-	}
+	// The node ends up open again. The controller reads experiments from a cache
+	// that can lag a moment behind its own status write, so a reconcile queued
+	// during the refused eviction may cordon once more before it notices the run
+	// has failed; it releases the node again straight away, so wait for that.
+	eventually(t, 30*time.Second, "node released after the refused drain", func() bool {
+		n := getNode(t, c, "drain-pdb-a")
+		return !n.Spec.Unschedulable && len(n.Annotations) == 0
+	})
 }
 
 func TestNodeDrainNeedsAnotherNode(t *testing.T) {
