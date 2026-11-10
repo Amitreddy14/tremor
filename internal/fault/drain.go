@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -19,6 +20,9 @@ import (
 // message instead of retrying: a drain that the workload's own budget forbids
 // is a finding, not noise.
 var ErrBlocked = errors.New("eviction blocked")
+
+// EvictTimeout bounds one eviction request. A variable so tests can shorten it.
+var EvictTimeout = 5 * time.Second
 
 // Annotations Tremor puts on a node it has cordoned.
 const (
@@ -74,9 +78,17 @@ func (NodeDrain) Inject(ctx context.Context, c client.Client, s Spec) error {
 			ObjectMeta:    metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 			DeleteOptions: &metav1.DeleteOptions{GracePeriodSeconds: &zero, Preconditions: &metav1.Preconditions{UID: &pod.UID}},
 		}
-		switch err := c.SubResource("eviction").Create(ctx, &pod, ev); {
+		// client-go retries a 429 answer for as long as the server's Retry-After
+		// hint says (10 s, up to 10 times), which would hold the controller's
+		// only worker for minutes. Bound each eviction and treat running out of
+		// time as the refusal it is.
+		evictCtx, cancel := context.WithTimeout(ctx, EvictTimeout)
+		err = c.SubResource("eviction").Create(evictCtx, &pod, ev)
+		timedOut := evictCtx.Err() != nil && ctx.Err() == nil
+		cancel()
+		switch {
 		case err == nil, apierrors.IsNotFound(err), apierrors.IsConflict(err):
-		case apierrors.IsTooManyRequests(err):
+		case apierrors.IsTooManyRequests(err), err != nil && timedOut:
 			return fmt.Errorf("%w: pod %s/%s cannot be evicted right now (a PodDisruptionBudget?): %v", ErrBlocked, s.Namespace, t.Name, err)
 		default:
 			return fmt.Errorf("evicting pod %s/%s: %w", s.Namespace, t.Name, err)
