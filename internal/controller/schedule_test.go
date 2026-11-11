@@ -13,9 +13,27 @@ import (
 	tremorv1 "github.com/Amitreddy14/tremor/api/v1alpha1"
 )
 
-// scheduleClockOffset shifts the schedule controller's clock into the future
-// so a per-minute schedule can fire without a real minute passing.
-var scheduleClockOffset atomic.Int64
+// scheduleClock freezes the schedule controller's clock (unix nanoseconds; 0
+// means real time). A frozen clock keeps a test from crossing a minute
+// boundary halfway through and seeing a second run become due.
+var scheduleClock atomic.Int64
+
+// freezeClock sets the schedule clock to the start of the current minute plus
+// d, and restores real time when the test ends.
+func freezeClock(t *testing.T, d time.Duration) {
+	t.Helper()
+	scheduleClock.Store(time.Now().Truncate(time.Minute).Add(d).UnixNano())
+	t.Cleanup(func() { scheduleClock.Store(0) })
+}
+
+// cleanupSchedule removes a schedule at the end of a test so it stops
+// reacting to later tests' clocks.
+func cleanupSchedule(t *testing.T, c client.Client, name string) {
+	t.Cleanup(func() {
+		_ = c.Delete(context.Background(), &tremorv1.ChaosSchedule{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNamespace}})
+	})
+}
 
 func newSchedule(name, app, cron string) *tremorv1.ChaosSchedule {
 	e := newExperiment("unused", app)
@@ -55,11 +73,14 @@ func scheduleExperiments(t *testing.T, c client.Client, name string) []tremorv1.
 func touch(t *testing.T, c client.Client, name, val string) {
 	t.Helper()
 	s := getSchedule(t, c, name)
+	base := s.DeepCopy()
 	if s.Annotations == nil {
 		s.Annotations = map[string]string{}
 	}
 	s.Annotations["touch"] = val
-	if err := c.Update(context.Background(), &s); err != nil {
+	// A patch carries no resourceVersion, so it cannot lose a race with the
+	// controller's own status writes.
+	if err := c.Patch(context.Background(), &s, client.MergeFrom(base)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -74,6 +95,7 @@ func TestScheduleCreatesExperiments(t *testing.T) {
 	if err := c.Create(ctx, s); err != nil {
 		t.Fatal(err)
 	}
+	cleanupSchedule(t, c, "every-minute")
 
 	// Nothing is due yet; the next run is planned.
 	eventually(t, 10*time.Second, "next run planned", func() bool {
@@ -84,8 +106,7 @@ func TestScheduleCreatesExperiments(t *testing.T) {
 	}
 
 	// Two minutes pass: a run is due.
-	scheduleClockOffset.Store(int64(2 * time.Minute))
-	defer scheduleClockOffset.Store(0)
+	freezeClock(t, 2*time.Minute+10*time.Second) // the run at +2m is 10s old
 	touch(t, c, "every-minute", "1")
 
 	eventually(t, 15*time.Second, "an experiment to be created", func() bool {
@@ -122,8 +143,8 @@ func TestScheduleSuspendedCreatesNothing(t *testing.T) {
 	if err := c.Create(ctx, s); err != nil {
 		t.Fatal(err)
 	}
-	scheduleClockOffset.Store(int64(5 * time.Minute))
-	defer scheduleClockOffset.Store(0)
+	cleanupSchedule(t, c, "suspended")
+	freezeClock(t, 5*time.Minute)
 	touch(t, c, "suspended", "1")
 	eventually(t, 10*time.Second, "suspended message", func() bool {
 		return getSchedule(t, c, "suspended").Status.Message == "suspended"
@@ -156,9 +177,10 @@ func TestScheduleMissedRunPastDeadlineIsSkipped(t *testing.T) {
 	eventually(t, 10*time.Second, "next run planned", func() bool {
 		return getSchedule(t, c, "late").Status.NextScheduleTime != nil
 	})
-	// An hour passes with the operator "down": the latest run is far past its deadline.
-	scheduleClockOffset.Store(int64(time.Hour))
-	defer scheduleClockOffset.Store(0)
+	cleanupSchedule(t, c, "late")
+	// An hour passes with the operator "down": the latest run (at +1h) is 45s
+	// old, past the 30s deadline.
+	freezeClock(t, time.Hour+45*time.Second)
 	touch(t, c, "late", "1")
 	eventually(t, 10*time.Second, "skip message", func() bool {
 		return getSchedule(t, c, "late").Status.LastScheduleTime != nil

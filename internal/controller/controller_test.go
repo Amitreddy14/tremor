@@ -127,7 +127,12 @@ func bootEnv() (client.Client, error) {
 	sr := &ChaosScheduleReconciler{
 		Client: mgr.GetClient(),
 		Scheme: scheme,
-		Now:    func() time.Time { return time.Now().Add(time.Duration(scheduleClockOffset.Load())) },
+		Now: func() time.Time {
+			if ns := scheduleClock.Load(); ns != 0 {
+				return time.Unix(0, ns)
+			}
+			return time.Now()
+		},
 	}
 	if err := sr.SetupWithManager(mgr); err != nil {
 		return nil, err
