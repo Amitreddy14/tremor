@@ -1,0 +1,85 @@
+{{- if eq .Values.history.mode "builtin" }}
+{{- $p := .Values.history.builtin.persistence }}
+{{- if $p.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tremor.historyService" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: history
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $p.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tremor.historyService" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: history
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "tremor.selector" . | nindent 6 }}
+      app.kubernetes.io/component: history
+  template:
+    metadata:
+      labels:
+        {{- include "tremor.selector" . | nindent 8 }}
+        app.kubernetes.io/component: history
+    spec:
+      containers:
+        - name: mongo
+          image: {{ .Values.history.builtin.image }}
+          ports:
+            - name: mongo
+              containerPort: 27017
+          readinessProbe:
+            tcpSocket: { port: mongo }
+            initialDelaySeconds: 2
+            periodSeconds: 2
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: data
+          {{- if $p.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "tremor.historyService" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tremor.historyService" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: history
+spec:
+  selector:
+    {{- include "tremor.selector" . | nindent 4 }}
+    app.kubernetes.io/component: history
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: mongo
+{{- end }}

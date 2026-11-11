@@ -40,6 +40,31 @@ jobs:
           kubectl kustomize config/history > /dev/null
           kubectl kustomize config/demo > /dev/null
           kubectl kustomize config/monitoring > /dev/null
+      - name: helm chart matches the kustomize manifests
+        run: |
+          python3 - <<'PY'
+          import filecmp, sys, yaml
+          for f in ("tremor.dev_chaosexperiments.yaml", "tremor.dev_chaosschedules.yaml"):
+              if not filecmp.cmp(f"config/crd/bases/{f}", f"deploy/helm/tremor/crds/{f}", shallow=False):
+                  sys.exit(f"{f}: deploy/helm/tremor/crds differs from config/crd/bases (copy it over)")
+          kustomize = next(yaml.safe_load_all(open("config/rbac/role.yaml")))["rules"]
+          text = open("deploy/helm/tremor/templates/rbac.yaml").read()
+          chart = yaml.safe_load(text[text.index("rules:"):text.index("\n---")])["rules"]
+          key = lambda r: (tuple(r["apiGroups"]), tuple(sorted(r["resources"])), tuple(sorted(r["verbs"])))
+          if sorted(map(key, kustomize)) != sorted(map(key, chart)):
+              sys.exit("deploy/helm/tremor/templates/rbac.yaml rules differ from config/rbac/role.yaml")
+          print("crds and rbac in step")
+          PY
+      - uses: azure/setup-helm@v4
+      - name: helm lint and template
+        run: |
+          helm lint deploy/helm/tremor
+          helm template t deploy/helm/tremor > /dev/null
+          helm template t deploy/helm/tremor --set history.mode=none --set forceDryRun=true --set 'allowedNamespaces={demo,staging}' > /dev/null
+          helm template t deploy/helm/tremor --set history.mode=external --set history.existingSecret=atlas --set metrics.serviceMonitor.enabled=true > /dev/null
+          helm template t deploy/helm/tremor --set history.builtin.persistence.enabled=true > /dev/null
+          if helm template t deploy/helm/tremor --set history.mode=external 2> /tmp/err; then echo "external without a URI must fail"; exit 1; fi
+          grep -q 'needs history.mongoUri' /tmp/err
       - name: dashboard is valid JSON
         run: python3 -m json.tool config/monitoring/dashboards/tremor.json > /dev/null
 

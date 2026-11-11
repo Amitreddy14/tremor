@@ -1,0 +1,17 @@
+Tremor {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }}.
+
+Run a first experiment (dry run, nothing is disturbed):
+  kubectl apply -f https://raw.githubusercontent.com/Amitreddy14/tremor/main/config/samples/pod-kill-dry-run.yaml
+  kubectl get chaosexperiments -A
+
+{{- if empty .Values.allowedNamespaces }}
+
+Warning: allowedNamespaces is empty, so experiments may target any namespace.
+Set --set allowedNamespaces={demo} (or your own) on shared clusters.
+{{- end }}
+{{- if eq .Values.history.mode "builtin" }}
+{{- if not .Values.history.builtin.persistence.enabled }}
+
+Note: the built-in history database is ephemeral (history.builtin.persistence.enabled=false).
+{{- end }}
+{{- end }}

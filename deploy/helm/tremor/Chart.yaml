@@ -1,0 +1,9 @@
+apiVersion: v2
+name: tremor
+description: Chaos testing for Kubernetes - inject failures, measure pod and user-visible recovery.
+type: application
+version: 0.8.0
+appVersion: "0.8.0"
+home: https://github.com/Amitreddy14/tremor
+sources:
+  - https://github.com/Amitreddy14/tremor

@@ -1,14 +1,16 @@
 # syntax=docker/dockerfile:1
 # Build either binary: --build-arg TARGET=manager (default) or TARGET=shop.
-FROM golang:1.24 AS build
+FROM --platform=$BUILDPLATFORM golang:1.24 AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
 ARG TARGET=manager
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=dev
 ARG COMMIT=none
-RUN CGO_ENABLED=0 go build -trimpath \
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath \
     -ldflags "-s -w -X github.com/Amitreddy14/tremor/internal/version.Version=${VERSION} -X github.com/Amitreddy14/tremor/internal/version.Commit=${COMMIT}" \
     -o /out/app ./cmd/${TARGET}
 

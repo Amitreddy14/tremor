@@ -1,0 +1,101 @@
+{{- if and (eq .Values.history.mode "external") (not .Values.history.mongoUri) (not .Values.history.existingSecret) }}
+{{- fail "history.mode=external needs history.mongoUri or history.existingSecret" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tremor.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: manager
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "tremor.selector" . | nindent 6 }}
+      app.kubernetes.io/component: manager
+  template:
+    metadata:
+      labels:
+        {{- include "tremor.selector" . | nindent 8 }}
+        app.kubernetes.io/component: manager
+    spec:
+      serviceAccountName: {{ include "tremor.fullname" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: manager
+          image: {{ include "tremor.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            {{- if .Values.leaderElect }}
+            - --leader-elect
+            {{- end }}
+            - --metrics-bind-address=:8080
+            - --health-probe-bind-address=:8081
+            - --stress-image={{ .Values.stressImage }}
+            - --netem-image={{ .Values.netemImage }}
+            {{- with .Values.allowedNamespaces }}
+            - --allowed-namespaces={{ join "," . }}
+            {{- end }}
+            {{- with .Values.allowedProbeHosts }}
+            - --allowed-probe-hosts={{ join "," . }}
+            {{- end }}
+            {{- if .Values.forceDryRun }}
+            - --force-dry-run
+            {{- end }}
+            {{- with .Values.clusterName }}
+            - --cluster-name={{ . }}
+            {{- end }}
+            {{- if eq .Values.history.mode "builtin" }}
+            - --history-mongo-uri=mongodb://{{ include "tremor.historyService" . }}.{{ .Release.Namespace }}.svc.cluster.local:27017
+            {{- else if and (eq .Values.history.mode "external") (not .Values.history.existingSecret) }}
+            - --history-mongo-uri={{ .Values.history.mongoUri }}
+            {{- end }}
+          {{- if and (eq .Values.history.mode "external") .Values.history.existingSecret }}
+          env:
+            - name: TREMOR_HISTORY_MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.history.existingSecret }}
+                  key: uri
+          {{- end }}
+          ports:
+            - name: metrics
+              containerPort: 8080
+            - name: probes
+              containerPort: 8081
+          livenessProbe:
+            httpGet: { path: /healthz, port: probes }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: probes }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

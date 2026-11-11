@@ -1,0 +1,65 @@
+# Values for the Tremor operator chart.
+
+image:
+  # The operator image. Published to GHCR by the release workflow.
+  repository: ghcr.io/amitreddy14/tremor-manager
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Images the operator starts inside target pods for stress and network faults.
+stressImage: busybox:1.36
+netemImage: ghcr.io/amitreddy14/tremor-netem:0.8.0
+
+imagePullSecrets: []
+
+# Namespaces experiments may run in. Empty allows every namespace, so set this
+# on any shared cluster.
+allowedNamespaces: []
+# Extra hosts steady-state probes may call (exact or *.suffix). Services of the
+# experiment's own namespace are always allowed.
+allowedProbeHosts: []
+# Turn every experiment into a dry run.
+forceDryRun: false
+
+# Leader election, needed only with more than one replica.
+leaderElect: true
+replicaCount: 1
+
+# Where finished runs are stored.
+history:
+  # "none" disables history, "builtin" runs a small MongoDB next to the
+  # operator (ephemeral unless persistence is on), "external" uses mongoUri,
+  # for example a MongoDB Atlas connection string.
+  mode: builtin
+  # Used when mode is "external". Prefer existingSecret over putting a URI
+  # with a password in values.
+  mongoUri: ""
+  # Name of a Secret holding the URI under key "uri" (mode "external").
+  existingSecret: ""
+  builtin:
+    image: mongo:7.0
+    persistence:
+      enabled: false
+      size: 1Gi
+      storageClass: ""
+
+# Label stored with each run; useful when several clusters share one database.
+clusterName: ""
+
+metrics:
+  # Create a ServiceMonitor (needs the Prometheus Operator CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    # Labels the Prometheus instance selects on, for example
+    # release: kube-prometheus-stack.
+    labels: {}
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
