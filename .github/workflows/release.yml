@@ -1,0 +1,84 @@
+name: release
+
+# Publishes the operator, netem and demo shop images to GHCR (amd64 and arm64,
+# so the same tags run on Oracle's Ampere free tier) and packages the Helm
+# chart, when a version tag is pushed: git tag v0.8.0 && git push origin v0.8.0
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: lowercase owner
+        id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: version
+        id: v
+        run: echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: tremor-manager
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            TARGET=manager
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-manager:${{ steps.v.outputs.tag }}
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-manager:latest
+      - name: tremor-shop
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            TARGET=shop
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-shop:${{ steps.v.outputs.tag }}
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-shop:latest
+      - name: tremor-netem
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.netem
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-netem:${{ steps.v.outputs.tag }}
+            ghcr.io/${{ steps.owner.outputs.name }}/tremor-netem:latest
+
+  chart:
+    runs-on: ubuntu-latest
+    needs: images
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: package chart with this release's version
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          helm package deploy/helm/tremor --version "${v}" --app-version "${v}"
+      - name: attach chart to the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --generate-notes tremor-*.tgz \
+            || gh release upload "${GITHUB_REF_NAME}" tremor-*.tgz --clobber

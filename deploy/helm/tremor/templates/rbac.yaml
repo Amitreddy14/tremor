@@ -1,0 +1,65 @@
+# Mirrors config/rbac/role.yaml (a CI check keeps the two in step).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "tremor.fullname" . }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments/status]
+    verbs: [get, update, patch]
+  - apiGroups: [tremor.dev]
+    resources: [chaosexperiments/finalizers]
+    verbs: [update]
+  - apiGroups: [tremor.dev]
+    resources: [chaosschedules]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [tremor.dev]
+    resources: [chaosschedules/status]
+    verbs: [get, update, patch]
+  - apiGroups: [tremor.dev]
+    resources: [chaosschedules/finalizers]
+    verbs: [update]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/ephemeralcontainers]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, patch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "tremor.fullname" . }}
+  labels:
+    {{- include "tremor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "tremor.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "tremor.fullname" . }}
+    namespace: {{ .Release.Namespace }}

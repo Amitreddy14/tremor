@@ -1,0 +1,9 @@
+# The demo shop with its image taken from GHCR instead of a local build.
+# Set newTag to the release you installed. `kubectl apply -k config/demo-ghcr`
+resources:
+  - ../demo
+
+images:
+  - name: tremor-shop
+    newName: ghcr.io/amitreddy14/tremor-shop
+    newTag: "0.8.0"

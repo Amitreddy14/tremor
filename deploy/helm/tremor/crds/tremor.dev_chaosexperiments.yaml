@@ -1,0 +1,216 @@
+---
+# Mirrors controller-gen output from api/v1alpha1 (`make manifests` regenerates it).
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: chaosexperiments.tremor.dev
+spec:
+  group: tremor.dev
+  names:
+    kind: ChaosExperiment
+    listKind: ChaosExperimentList
+    plural: chaosexperiments
+    singular: chaosexperiment
+    shortNames:
+      - cx
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Fault
+          type: string
+          jsonPath: .spec.fault.type
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: PodRecovery(ms)
+          type: integer
+          jsonPath: .status.podRecoveryMillis
+        - name: UserRecovery(ms)
+          type: integer
+          jsonPath: .status.userRecoveryMillis
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: ChaosExperiment is one controlled failure and its measured outcome.
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required: [target, fault]
+              properties:
+                target:
+                  type: object
+                  required: [selector]
+                  properties:
+                    selector:
+                      type: object
+                      minProperties: 1
+                      additionalProperties:
+                        type: string
+                fault:
+                  type: object
+                  required: [type]
+                  properties:
+                    type:
+                      type: string
+                      enum: [PodKill, DependencyOutage, CPUStress, MemoryStress, NetworkLatency, NetworkLoss, NodeDrain]
+                    params:
+                      type: object
+                      properties:
+                        count:
+                          type: integer
+                          format: int32
+                          minimum: 1
+                        duration:
+                          description: |-
+                            Duration is how long a sustained fault (DependencyOutage, CPUStress,
+                            MemoryStress, NetworkLatency, NetworkLoss) stays active. Default 30s, between 1s and 10m.
+                          type: string
+                        cpuWorkers:
+                          description: CPUWorkers is the number of busy loops per pod for CPUStress (default 1).
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 64
+                        memoryMiB:
+                          description: MemoryMiB is the memory held per pod for MemoryStress (default 256).
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 16384
+                        latency:
+                          description: Latency is the delay added by NetworkLatency (default 200ms, up to 10s).
+                          type: string
+                        jitter:
+                          description: Jitter is the random variation of the delay, at most the latency (NetworkLatency only, default none).
+                          type: string
+                        lossPercent:
+                          description: LossPercent is the share of packets NetworkLoss drops (default 20).
+                          type: integer
+                          format: int32
+                          minimum: 1
+                          maximum: 100
+                safety:
+                  type: object
+                  properties:
+                    dryRun:
+                      type: boolean
+                    maxAffectedPercent:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      maximum: 100
+                      default: 50
+                    allowTotalOutage:
+                      type: boolean
+                steadyState:
+                  type: object
+                  required: [http]
+                  properties:
+                    http:
+                      type: object
+                      required: [url]
+                      properties:
+                        url:
+                          type: string
+                          minLength: 1
+                        expectStatus:
+                          type: integer
+                          format: int32
+                          minimum: 100
+                          maximum: 599
+                          default: 200
+                    interval:
+                      type: string
+                    successThreshold:
+                      type: integer
+                      format: int32
+                      minimum: 1
+                      default: 3
+                recoveryTimeout:
+                  type: string
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                message:
+                  type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                startedAt:
+                  type: string
+                  format: date-time
+                injectedAt:
+                  type: string
+                  format: date-time
+                recoveredAt:
+                  type: string
+                  format: date-time
+                revertedAt:
+                  description: |-
+                    RevertedAt is when a sustained fault was released. Recovery times of
+                    sustained faults are measured from here, not from injectedAt.
+                  type: string
+                  format: date-time
+                workload:
+                  description: Workload is the workload a DependencyOutage scaled down.
+                  type: object
+                  required: [kind, name]
+                  properties:
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                node:
+                  description: Node is the node a NodeDrain cordoned and evicted pods from.
+                  type: string
+                baselineReadyPods:
+                  type: integer
+                  format: int32
+                affectedPods:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, uid]
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                podsRecoveredAt:
+                  type: string
+                  format: date-time
+                podRecoveryMillis:
+                  type: integer
+                  format: int64
+                userRecoveryMillis:
+                  type: integer
+                  format: int64
+                userImpacted:
+                  type: boolean
+                probeSuccesses:
+                  type: integer
+                  format: int32
+                probeFailures:
+                  type: integer
+                  format: int32
+                runRecorded:
+                  description: |-
+                    RunRecorded is true once the finished run has been saved to the history
+                    store.
+                  type: boolean

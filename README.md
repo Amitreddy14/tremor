@@ -2,7 +2,7 @@
 
 A chaos testing platform for Kubernetes. Declare a failure as a `ChaosExperiment`, let the Go operator inject it into your application, and get a measured **recovery time** back, with Prometheus metrics, a Grafana dashboard and a MongoDB run history.
 
-> Status: **Phase 7 (safety and scheduling)**: seven faults (`PodKill`, `DependencyOutage`, `CPUStress`, `MemoryStress`, `NetworkLatency`, `NetworkLoss`, `NodeDrain`) report pod recovery and user-visible recovery, with namespace and probe-URL allowlists, overlap blocking, cron `ChaosSchedule`s, Prometheus metrics, a Grafana dashboard, MongoDB run history and the `tremorctl` CLI. A Helm chart and the free deployment guide come next. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phase 8 (ship it)**: a Helm chart, images published to GHCR on release, a free-tier deployment guide, and seven faults (`PodKill`, `DependencyOutage`, `CPUStress`, `MemoryStress`, `NetworkLatency`, `NetworkLoss`, `NodeDrain`) report pod recovery and user-visible recovery, with namespace and probe-URL allowlists, overlap blocking, cron `ChaosSchedule`s, Prometheus metrics, a Grafana dashboard, MongoDB run history and the `tremorctl` CLI. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
@@ -22,6 +22,27 @@ flowchart LR
   P --> G[Grafana]
   O -->|run history| M[(MongoDB)]
 ```
+
+## Install on any cluster (Helm)
+
+```bash
+helm install tremor https://github.com/Amitreddy14/tremor/releases/download/v0.8.0/tremor-0.8.0.tgz \
+  -n tremor-system --create-namespace --set 'allowedNamespaces={demo}'
+```
+
+History can use the built-in MongoDB, none, or an external one such as MongoDB Atlas M0 (`history.mode=external`). A free public demo (k3s on Oracle Cloud Always Free, Atlas M0, images on GHCR) is described step by step in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). It costs nothing but has not been run end to end yet; the chart is checked in CI and the kind e2e runs every PR.
+
+## Measured results
+
+Recorded on a local kind cluster with the demo shop (3 replicas); see [docs/RESULTS.md](docs/RESULTS.md) for setup and caveats.
+
+| Fault | Pod recovery | User recovery | Notes |
+| --- | --- | --- | --- |
+| NodeDrain (2 of 3 pods evicted) | 2.2 s | 0 ms | users saw no failed probe |
+| NetworkLatency 1.5 s | about 0 s | 0 ms | probe timeouts made readiness fail and the kubelet restart a container |
+| NetworkLoss | about 0 s | 0 ms | no readiness effect |
+
+Run `RUNS=5 make results` to produce the full table (all seven faults, median of N) for your own cluster.
 
 ## Stack
 
@@ -179,6 +200,8 @@ make manifests generate   # regenerate CRD, RBAC, deepcopy after editing api/
 ## Docs
 
 - [Design](docs/DESIGN.md)
+- [Deploying for free](docs/DEPLOYMENT.md)
+- [Measured results](docs/RESULTS.md)
 - [Roadmap and phases](docs/ROADMAP.md)
 - [Architecture decisions](docs/adr/)
 - [API preview examples](examples/)

@@ -11,11 +11,11 @@ Built in phases. Each phase is a branch, a PR, green CI, and a tag.
 | 4 | Result store and CLI | MongoDB run history, `tremorctl` history, show and report | Done |
 | 5 | Dependency and resource faults | DependencyOutage, CPUStress, MemoryStress, `Holding` phase | Done |
 | 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | Done |
-| 7 | Safety and scheduling | Namespace and probe-URL allowlists, overlap blocking, forced dry-run, `ChaosSchedule`, exact release time | Delivered, awaiting merge |
-| 8 | Ship it | Helm chart, kind e2e in CI, free deployment guide, README with real measured results | |
+| 7 | Safety and scheduling | Namespace and probe-URL allowlists, overlap blocking, forced dry-run, `ChaosSchedule`, exact release time | Done |
+| 8 | Ship it | Helm chart, GHCR release workflow, kind e2e in CI, free deployment guide, README with measured results | Delivered, awaiting merge |
 
 ## Free deployment plan
 
-- CI: every PR runs unit tests; from Phase 8 a kind cluster runs end-to-end experiments on GitHub Actions (free for public repos).
+- CI: every PR runs unit tests, lints and renders the Helm chart, and runs end-to-end experiments on a kind cluster (free for public repos).
 - Public demo (when a cloud account exists): k3s on Oracle Cloud Always Free, MongoDB on Atlas M0 free tier, images on GitHub Container Registry.
 - Until then: Helm chart and guide are delivered, real deployment is done later.
