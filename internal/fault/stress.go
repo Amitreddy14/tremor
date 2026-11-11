@@ -72,3 +72,11 @@ func injectStress(ctx context.Context, c client.Client, s Spec, image, script st
 func stressDone(ctx context.Context, c client.Client, s Spec, injectedAt, now time.Time) (bool, error) {
 	return ephemeralDone(ctx, c, s, stress.ContainerName(s.Holder), "stress", injectedAt, now, nil)
 }
+
+func (CPUStress) EndedAt(ctx context.Context, c client.Client, s Spec) (time.Time, bool) {
+	return ephemeralEndedAt(ctx, c, s, stress.ContainerName(s.Holder))
+}
+
+func (MemoryStress) EndedAt(ctx context.Context, c client.Client, s Spec) (time.Time, bool) {
+	return ephemeralEndedAt(ctx, c, s, stress.ContainerName(s.Holder))
+}

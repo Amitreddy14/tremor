@@ -2,7 +2,7 @@
 
 A chaos testing platform for Kubernetes. Declare a failure as a `ChaosExperiment`, let the Go operator inject it into your application, and get a measured **recovery time** back, with Prometheus metrics, a Grafana dashboard and a MongoDB run history.
 
-> Status: **Phase 5 (dependency and resource faults)**: `PodKill`, `DependencyOutage`, `CPUStress` and `MemoryStress` experiments report pod recovery and user-visible recovery, with Prometheus metrics, a Grafana dashboard, MongoDB run history and the `tremorctl` CLI. Network and node faults come next. See [docs/ROADMAP.md](docs/ROADMAP.md).
+> Status: **Phase 7 (safety and scheduling)**: seven faults (`PodKill`, `DependencyOutage`, `CPUStress`, `MemoryStress`, `NetworkLatency`, `NetworkLoss`, `NodeDrain`) report pod recovery and user-visible recovery, with namespace and probe-URL allowlists, overlap blocking, cron `ChaosSchedule`s, Prometheus metrics, a Grafana dashboard, MongoDB run history and the `tremorctl` CLI. A Helm chart and the free deployment guide come next. See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What it does
 
@@ -109,11 +109,39 @@ kubectl -n demo get cx -w
 Things to know before you run them on something you care about (details in [ADR 0010](docs/adr/0010-sustained-faults.md)):
 
 - The outage is real: with the demo's `emptyDir` MongoDB the data is gone afterwards. Tremor always restores the replica count, also when you abort or delete the experiment.
+- Recovery after a sustained fault is timed from the moment the fault really ended: for stress and network faults that is the finish time of the container, not the moment the operator noticed it.
 - Stress runs in an ephemeral container (Kubernetes 1.25+). It cannot be stopped early: aborting an experiment ends the experiment, but the stress process runs until its duration is up. Memory stress above the pod's memory limit causes an OOM kill, so pick the size on purpose.
 - The stress image (`busybox:1.36` by default, `--stress-image` to change) must be pullable by the nodes; `make kind-deploy` preloads it into kind.
 - An autoscaler or GitOps tool that scales the dependency back up during an outage ends it early. Pause them for the target.
 - Network faults add a `tc netem` rule to the pod's own interface from an ephemeral container with the `NET_ADMIN` capability, so the namespace must allow that (not the `restricted` Pod Security level) and the node kernel needs the `sch_netem` module. They shape what the pod *sends*, so callers see slow or lost responses. They use their own small image (`tremor-netem:dev`, `--netem-image` to change, `make netem-load` for kind). Unlike stress, an early end works: abort or delete removes the rule within a second.
 - A node drain needs somewhere for the pods to go: use the two-worker kind cluster (`make kind-up`). Tremor refuses to drain a node if that would take every replica down or exceed `maxAffectedPercent`, and an eviction that a PodDisruptionBudget refuses fails the run with that message. The node is cordoned while the run lasts and always handed back as it was found.
+
+### Safety guards
+
+The operator refuses what could do damage before it injects anything:
+
+| Guard | Rule | Flag |
+| --- | --- | --- |
+| Namespace allowlist | Experiments in other namespaces fail immediately | `--allowed-namespaces=demo` (empty allows all; `make kind-deploy` sets `demo`) |
+| Probe URL | Probes run from the operator pod, so only `name.<ns>.svc` of the experiment's own namespace is allowed, plus listed hosts. IP literals, `localhost`, credentials and redirects are refused | `--allowed-probe-hosts=example.com,*.internal.test` |
+| Overlap | An experiment waits while another one on overlapping pods is injecting; two queued ones go oldest first. It fails with the reason if the baseline timeout passes | none |
+| Blast radius | `maxAffectedPercent` (default 50%) and one spared pod unless `allowTotalOutage` | per experiment |
+| Forced dry run | Every experiment only plans and reports its targets | `--force-dry-run` |
+
+Overlap is checked by label selector within one namespace. A `NodeDrain` can still reach pods of other workloads on the node, so use a PodDisruptionBudget for those.
+
+### Scheduled experiments
+
+A `ChaosSchedule` (short name `cxs`) creates a `ChaosExperiment` from a template on a cron schedule (UTC), see `config/samples/shop-pod-kill-schedule.yaml`.
+
+```powershell
+kubectl apply -f config/samples/shop-pod-kill-schedule.yaml
+kubectl -n demo get chaosschedule          # schedule, last and next run
+kubectl -n demo get chaosexperiment -l tremor.dev/schedule=shop-pod-kill-5m
+kubectl -n demo patch chaosschedule shop-pod-kill-5m --type merge -p '{"spec":{"suspend":true}}'
+```
+
+`concurrencyPolicy: Forbid` (default) skips a run while the previous experiment is active; a run later than `startingDeadlineSeconds` (default 300) is skipped, for example after the operator was down. `successfulRunsHistoryLimit` and `failedRunsHistoryLimit` (default 3 each) prune the oldest experiments; the full record stays in MongoDB. Deleting the schedule deletes its experiments.
 
 ### Run history and reports
 

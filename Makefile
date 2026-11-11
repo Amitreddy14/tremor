@@ -14,7 +14,7 @@ ENVTEST_K8S    ?= 1.31.0
 KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
-        docker-build-shop docker-build-netem netem-load demo-deploy demo-undeploy e2e-faults \
+        docker-build-shop docker-build-netem netem-load demo-deploy demo-undeploy e2e-faults e2e-schedule \
         monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy history-forward tremorctl e2e undeploy
 
 help: ## Show targets
@@ -85,7 +85,10 @@ kind-down: ## Delete the kind cluster
 kind-deploy: docker-build ## Build, load into kind, deploy the operator and its history MongoDB
 	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
 	docker pull $(IMG_STRESS)
-	kind load docker-image $(IMG_STRESS) --name $(KIND_CLUSTER)
+	# Preloading the stress image only saves a pull. Docker's containerd image
+	# store cannot always export multi-platform images for kind, so a failure
+	# here is not fatal: the nodes pull the image themselves.
+	-kind load docker-image $(IMG_STRESS) --name $(KIND_CLUSTER)
 	kubectl apply -k config/history
 	kubectl -n tremor-system rollout status deploy/tremor-history --timeout=180s
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s
@@ -101,6 +104,9 @@ e2e: ## Run the end-to-end script (run demo-deploy first)
 
 e2e-faults: ## Network and node fault checks (run demo-deploy, kind-deploy and netem-load first)
 	bash ./hack/e2e-faults.sh
+
+e2e-schedule: ## Safety guards and schedule checks (run demo-deploy and kind-deploy first)
+	bash ./hack/e2e-schedule.sh
 
 monitoring-up: ## Install kube-prometheus-stack (Prometheus + Grafana) into kind via Helm
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update

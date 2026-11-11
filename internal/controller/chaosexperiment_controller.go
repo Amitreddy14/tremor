@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -58,6 +59,14 @@ type ChaosExperimentReconciler struct {
 	StressImage string
 	// NetemImage runs network faults; fault.DefaultNetemImage if empty.
 	NetemImage string
+
+	// AllowedNamespaces limits where experiments may run. Empty allows all.
+	AllowedNamespaces []string
+	// AllowedProbeHosts adds hosts steady-state probes may call, beyond the
+	// in-cluster services of the experiment's own namespace.
+	AllowedProbeHosts []string
+	// ForceDryRun turns every experiment into a dry run.
+	ForceDryRun bool
 }
 
 // +kubebuilder:rbac:groups=tremor.dev,resources=chaosexperiments,verbs=get;list;watch;update;patch
@@ -105,6 +114,14 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := engine.ValidateSelector(exp.Spec.Target.Selector); err != nil {
 		return r.fail(ctx, &exp, err.Error())
 	}
+	if !engine.NamespaceAllowed(exp.Namespace, r.AllowedNamespaces) {
+		return r.fail(ctx, &exp, fmt.Sprintf("namespace %q is not allowed by the operator (--allowed-namespaces=%s)", exp.Namespace, strings.Join(r.AllowedNamespaces, ",")))
+	}
+	if exp.Spec.SteadyState != nil {
+		if err := engine.ValidateProbeURL(exp.Spec.SteadyState.HTTP.URL, exp.Namespace, r.AllowedProbeHosts); err != nil {
+			return r.fail(ctx, &exp, err.Error())
+		}
+	}
 	fp, err := engine.NormalizeFault(faultParams(&exp))
 	if err != nil {
 		return r.fail(ctx, &exp, err.Error())
@@ -133,6 +150,13 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	obs := observe(&exp, pods, now, series, probing, threshold)
 	obs.Sustained = sustained
+	if phase == engine.PhasePending || phase == engine.PhaseBaselineCheck || phase == "" {
+		blocked, berr := r.blockedBy(ctx, &exp)
+		if berr != nil {
+			return ctrl.Result{}, berr
+		}
+		obs.Blocked = blocked
+	}
 	if !engine.RemovesPods(fp.Type) {
 		// Stress leaves the target pods in place, so "affected pods gone" is
 		// not part of recovery for it.
@@ -149,7 +173,9 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			obs.FaultDone = done
 		}
 	}
-	d := engine.Decide(phase, obs, configFrom(&exp))
+	cfg := configFrom(&exp)
+	cfg.DryRun = cfg.DryRun || r.ForceDryRun
+	d := engine.Decide(phase, obs, cfg)
 
 	switch d.Action {
 	case engine.ActionPlan, engine.ActionDryRun:
@@ -192,7 +218,7 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if err := injector.Revert(ctx, r.Client, spec); err != nil {
 			return ctrl.Result{}, err
 		}
-		t := metav1.NewMicroTime(r.now())
+		t := metav1.NewMicroTime(r.releaseTime(ctx, injector, spec, exp.Status.InjectedAt))
 		exp.Status.RevertedAt = &t
 	}
 
@@ -264,6 +290,50 @@ func (r *ChaosExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{Requeue: true}, nil
 	}
 	return ctrl.Result{RequeueAfter: d.RequeueAfter}, nil
+}
+
+// releaseTime is when a sustained fault really ended. Faults that know their
+// end (the container's finish time) report it; otherwise, or if the reported
+// time is implausible, it is the current time.
+func (r *ChaosExperimentReconciler) releaseTime(ctx context.Context, injector fault.Injector, spec fault.Spec, injectedAt *metav1.MicroTime) time.Time {
+	now := r.now()
+	if et, ok := injector.(fault.EndTimer); ok && injectedAt != nil {
+		if t, ok := et.EndedAt(ctx, r.Client, spec); ok && !t.Before(injectedAt.Time) && !t.After(now) {
+			return t
+		}
+	}
+	return now
+}
+
+// blockedBy names an active experiment in the same namespace that could
+// disturb the same pods, or returns "". An experiment already past its
+// baseline holds the pods; two still waiting are ordered by age so exactly one
+// goes first instead of both waiting on each other forever.
+func (r *ChaosExperimentReconciler) blockedBy(ctx context.Context, exp *tremorv1.ChaosExperiment) (string, error) {
+	var list tremorv1.ChaosExperimentList
+	if err := r.List(ctx, &list, client.InNamespace(exp.Namespace)); err != nil {
+		return "", err
+	}
+	for i := range list.Items {
+		o := &list.Items[i]
+		if o.UID == exp.UID || !o.DeletionTimestamp.IsZero() {
+			continue
+		}
+		p := engine.Phase(o.Status.Phase)
+		if engine.IsTerminal(p) || !engine.SelectorsOverlap(exp.Spec.Target.Selector, o.Spec.Target.Selector) {
+			continue
+		}
+		switch p {
+		case engine.PhaseInjecting, engine.PhaseHolding, engine.PhaseRecovering:
+			return fmt.Sprintf("experiment %s is running on overlapping pods", o.Name), nil
+		}
+		// Not yet injecting: the older one goes first (name breaks ties).
+		if o.CreationTimestamp.Before(&exp.CreationTimestamp) ||
+			(o.CreationTimestamp.Equal(&exp.CreationTimestamp) && o.Name < exp.Name) {
+			return fmt.Sprintf("experiment %s is queued ahead on overlapping pods", o.Name), nil
+		}
+	}
+	return "", nil
 }
 
 func (r *ChaosExperimentReconciler) stopProbe(exp *tremorv1.ChaosExperiment) {

@@ -63,6 +63,8 @@ jobs:
           cache: true
       - name: end-to-end pod kill, user-visible recovery and run history
         run: make e2e
+      - name: safety guards and scheduling
+        run: make e2e-schedule
       # Network faults need the sch_netem kernel module on the runner (kind nodes
       # share the host kernel). This step is informational: a runner image that
       # lacks the module must not block a merge. NodeDrain is skipped here

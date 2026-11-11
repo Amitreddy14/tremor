@@ -34,6 +34,12 @@ func Decide(phase Phase, o Observation, c Config) Decision {
 		return Decision{Next: PhaseBaselineCheck, Message: "checking baseline health"}
 
 	case PhaseBaselineCheck:
+		if o.Blocked != "" {
+			if o.Now.Sub(o.StartedAt) >= c.BaselineTimeout {
+				return Decision{Next: PhaseFailed, Message: "blocked: " + o.Blocked}
+			}
+			return Decision{Next: PhaseBaselineCheck, Message: "waiting: " + o.Blocked, RequeueAfter: baselineRetry}
+		}
 		podsHealthy := o.TotalPods > 0 && o.ReadyPods == o.TotalPods && o.TerminatingPods == 0
 		healthy := podsHealthy && (!o.ProbeEnabled || o.ProbeHealthy)
 		if !healthy {

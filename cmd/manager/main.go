@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,6 +41,10 @@ func main() {
 		clusterName string
 		stressImage string
 		netemImage  string
+
+		allowedNamespaces string
+		allowedProbeHosts string
+		forceDryRun       bool
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "address the Prometheus metrics endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "address the health probe endpoint binds to")
@@ -53,6 +58,12 @@ func main() {
 		"image for CPU and memory stress containers; needs sh, yes, sleep, kill and dd (BusyBox has them)")
 	flag.StringVar(&netemImage, "netem-image", fault.DefaultNetemImage,
 		"image for network latency and loss containers; needs sh, ip, tc (with netem), awk and grep (see Dockerfile.netem)")
+	flag.StringVar(&allowedNamespaces, "allowed-namespaces", os.Getenv("TREMOR_ALLOWED_NAMESPACES"),
+		"comma-separated namespaces experiments may run in (default $TREMOR_ALLOWED_NAMESPACES); all namespaces when empty")
+	flag.StringVar(&allowedProbeHosts, "allowed-probe-hosts", os.Getenv("TREMOR_ALLOWED_PROBE_HOSTS"),
+		"comma-separated extra hosts steady-state probes may call, exact or *.suffix (default $TREMOR_ALLOWED_PROBE_HOSTS); "+
+			"in-cluster services of the experiment's namespace are always allowed")
+	flag.BoolVar(&forceDryRun, "force-dry-run", false, "turn every experiment into a dry run (nothing is injected)")
 	zapOpts := zap.Options{}
 	zapOpts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -117,8 +128,20 @@ func main() {
 		OperatorVersion: version.Version,
 		StressImage:     stressImage,
 		NetemImage:      netemImage,
+
+		AllowedNamespaces: splitList(allowedNamespaces),
+		AllowedProbeHosts: splitList(allowedProbeHosts),
+		ForceDryRun:       forceDryRun,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller")
+		os.Exit(1)
+	}
+
+	if err := (&controller.ChaosScheduleReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create schedule controller")
 		os.Exit(1)
 	}
 
@@ -136,4 +159,15 @@ func main() {
 		setupLog.Error(err, "manager exited with error")
 		os.Exit(1)
 	}
+}
+
+// splitList splits a comma-separated flag value, dropping blanks.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
