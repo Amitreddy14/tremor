@@ -85,7 +85,10 @@ kind-down: ## Delete the kind cluster
 kind-deploy: docker-build ## Build, load into kind, deploy the operator and its history MongoDB
 	kind load docker-image $(IMG) --name $(KIND_CLUSTER)
 	docker pull $(IMG_STRESS)
-	kind load docker-image $(IMG_STRESS) --name $(KIND_CLUSTER)
+	# Preloading the stress image only saves a pull. Docker's containerd image
+	# store cannot always export multi-platform images for kind, so a failure
+	# here is not fatal: the nodes pull the image themselves.
+	-kind load docker-image $(IMG_STRESS) --name $(KIND_CLUSTER)
 	kubectl apply -k config/history
 	kubectl -n tremor-system rollout status deploy/tremor-history --timeout=180s
 	kubectl -n tremor-system rollout status deploy/tremor-manager --timeout=120s
