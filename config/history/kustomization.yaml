@@ -17,3 +17,6 @@ patches:
       - op: add
         path: /spec/template/spec/containers/0/args/-
         value: --cluster-name=kind
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --allowed-namespaces=demo

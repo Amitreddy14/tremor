@@ -118,8 +118,18 @@ func bootEnv() (client.Client, error) {
 		OperatorVersion: "vtest",
 		StressImage:     "busybox:test",
 		NetemImage:      "netem:test",
+		// Probe tests serve from httptest on the loopback address.
+		AllowedProbeHosts: []string{"127.0.0.1"},
 	}
 	if err := r.SetupWithManager(mgr); err != nil {
+		return nil, err
+	}
+	sr := &ChaosScheduleReconciler{
+		Client: mgr.GetClient(),
+		Scheme: scheme,
+		Now:    func() time.Time { return time.Now().Add(time.Duration(scheduleClockOffset.Load())) },
+	}
+	if err := sr.SetupWithManager(mgr); err != nil {
 		return nil, err
 	}
 

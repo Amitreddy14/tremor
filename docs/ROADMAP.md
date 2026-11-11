@@ -10,8 +10,8 @@ Built in phases. Each phase is a branch, a PR, green CI, and a tag.
 | 3 | Observability | Prometheus metrics, ServiceMonitor, Grafana dashboard | Done |
 | 4 | Result store and CLI | MongoDB run history, `tremorctl` history, show and report | Done |
 | 5 | Dependency and resource faults | DependencyOutage, CPUStress, MemoryStress, `Holding` phase | Done |
-| 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | Delivered, awaiting merge |
-| 7 | Safety and scheduling | Namespace allowlist, blast radius, dry-run, abort, `ChaosSchedule` | |
+| 6 | Network and node faults | NetworkLatency, NetworkLoss, NodeDrain | Done |
+| 7 | Safety and scheduling | Namespace and probe-URL allowlists, overlap blocking, forced dry-run, `ChaosSchedule`, exact release time | Delivered, awaiting merge |
 | 8 | Ship it | Helm chart, kind e2e in CI, free deployment guide, README with real measured results | |
 
 ## Free deployment plan

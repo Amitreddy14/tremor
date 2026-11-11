@@ -54,6 +54,10 @@ type Observation struct {
 	ReadyPods       int
 	TerminatingPods int
 
+	// Blocked is non-empty while another experiment that could disturb the same
+	// pods is active; the reason names it. The baseline check waits it out.
+	Blocked string
+
 	// BaselineReady is the ready pod count recorded before injection.
 	BaselineReady int
 	// AffectedStillPresent is true while any pod targeted by the fault

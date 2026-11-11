@@ -19,7 +19,7 @@ Make resilience testing declarative and measurable. Engineers describe a failure
 
 ## The `ChaosExperiment` API (v1alpha1, group `tremor.dev`)
 
-Sketch of the final shape. `api/v1alpha1` is the source of truth. Implemented through Phase 5: `target`, `fault` (PodKill, DependencyOutage, CPUStress, MemoryStress), `safety`, `steadyState` (HTTP probe) and `recoveryTimeout`. Results are reported in milliseconds as `podRecoveryMillis` and `userRecoveryMillis`.
+Sketch of the final shape. `api/v1alpha1` is the source of truth. Implemented: `target`, `fault` (all seven types), `safety`, `steadyState` (HTTP probe) and `recoveryTimeout`. Results are reported in milliseconds as `podRecoveryMillis` and `userRecoveryMillis`.
 
 ```yaml
 apiVersion: tremor.dev/v1alpha1
@@ -79,6 +79,12 @@ Every fault is reverted on any exit path (finalizer on the resource plus a TTL o
 ## Recovery time
 
 The headline metric. Defined in [ADR 0003](adr/0003-recovery-time-definition.md): time from fault injection to the first moment the steady-state probe has passed `successThreshold` times in a row, reported alongside the Kubernetes-level pod recovery time.
+
+## Safety and scheduling (Phase 7)
+
+Guards run in the experiment controller before any injection: namespace allowlist, steady-state URL validation (probes originate in the operator pod, so the URL is an outbound request made with the operator's network identity), overlap blocking between experiments, and `--force-dry-run`. The rules are pure functions in `internal/engine` (`NamespaceAllowed`, `ValidateProbeURL`, `SelectorsOverlap`) and the baseline check consumes `Observation.Blocked`.
+
+`ChaosSchedule` has its own reconciler. It computes due runs from a stdlib cron parser (`internal/schedule`), names the experiment after the run time so a retried run collides instead of duplicating, owns the experiments it creates and prunes them by history limit. See [ADR 0012](adr/0012-safety-and-scheduling.md).
 
 ## Fault mechanisms
 

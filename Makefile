@@ -14,7 +14,7 @@ ENVTEST_K8S    ?= 1.31.0
 KIND_CLUSTER   ?= tremor
 
 .PHONY: help build test test-unit vet fmt fmt-check generate manifests docker-build \
-        docker-build-shop docker-build-netem netem-load demo-deploy demo-undeploy e2e-faults \
+        docker-build-shop docker-build-netem netem-load demo-deploy demo-undeploy e2e-faults e2e-schedule \
         monitoring-up monitoring-apply monitoring-down grafana prometheus kind-up kind-up-lite kind-down kind-deploy history-forward tremorctl e2e undeploy
 
 help: ## Show targets
@@ -101,6 +101,9 @@ e2e: ## Run the end-to-end script (run demo-deploy first)
 
 e2e-faults: ## Network and node fault checks (run demo-deploy, kind-deploy and netem-load first)
 	bash ./hack/e2e-faults.sh
+
+e2e-schedule: ## Safety guards and schedule checks (run demo-deploy and kind-deploy first)
+	bash ./hack/e2e-schedule.sh
 
 monitoring-up: ## Install kube-prometheus-stack (Prometheus + Grafana) into kind via Helm
 	helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update

@@ -120,3 +120,11 @@ func netemDone(ctx context.Context, c client.Client, s Spec, injectedAt, now tim
 			return nil
 		})
 }
+
+func (NetworkLatency) EndedAt(ctx context.Context, c client.Client, s Spec) (time.Time, bool) {
+	return ephemeralEndedAt(ctx, c, s, netem.ContainerName(s.Holder))
+}
+
+func (NetworkLoss) EndedAt(ctx context.Context, c client.Client, s Spec) (time.Time, bool) {
+	return ephemeralEndedAt(ctx, c, s, netem.ContainerName(s.Holder))
+}

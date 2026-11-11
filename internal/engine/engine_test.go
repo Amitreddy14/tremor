@@ -431,3 +431,86 @@ func TestRevertedAtOnlyStartsClockForSustainedFaults(t *testing.T) {
 		t.Fatalf("sustained: got %s, want Recovering", d.Next)
 	}
 }
+
+func TestNamespaceAllowed(t *testing.T) {
+	if !NamespaceAllowed("any", nil) {
+		t.Fatal("empty allowlist permits all")
+	}
+	if !NamespaceAllowed("demo", []string{"a", "demo"}) || NamespaceAllowed("prod", []string{"demo"}) {
+		t.Fatal("exact match only")
+	}
+}
+
+func TestSelectorsOverlap(t *testing.T) {
+	a := map[string]string{"app": "shop"}
+	cases := []struct {
+		b    map[string]string
+		want bool
+	}{
+		{map[string]string{"app": "shop"}, true},
+		{map[string]string{"app": "shop", "tier": "web"}, true},
+		{map[string]string{"tier": "web"}, true}, // could match the same pod
+		{map[string]string{"app": "mongo"}, false},
+	}
+	for _, tc := range cases {
+		if got := SelectorsOverlap(a, tc.b); got != tc.want {
+			t.Errorf("%v: got %v", tc.b, got)
+		}
+	}
+}
+
+func TestValidateProbeURL(t *testing.T) {
+	ok := []string{
+		"http://shop.demo.svc.cluster.local/healthz",
+		"http://shop.demo.svc:8080/healthz",
+		"https://Shop.demo.svc/",
+	}
+	for _, u := range ok {
+		if err := ValidateProbeURL(u, "demo", nil); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	bad := []string{
+		"ftp://shop.demo.svc/",
+		"http://shop.other.svc/",
+		"http://169.254.169.254/latest/meta-data",
+		"http://localhost:8080/",
+		"http://example.com/",
+		"http://user:pw@shop.demo.svc/",
+		"http://[::1]:80/",
+		"shop.demo.svc",
+		"http:///x",
+	}
+	for _, u := range bad {
+		if err := ValidateProbeURL(u, "demo", nil); err == nil {
+			t.Errorf("%s should be rejected", u)
+		}
+	}
+	allow := []string{"example.com", "*.internal.test", "10.0.0.5"}
+	for _, u := range []string{"http://example.com/x", "https://a.internal.test/", "http://10.0.0.5:9/"} {
+		if err := ValidateProbeURL(u, "demo", allow); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	if err := ValidateProbeURL("http://evilinternal.test/", "demo", allow); err == nil {
+		t.Error("wildcard must match a dot boundary")
+	}
+}
+
+func TestBaselineBlocked(t *testing.T) {
+	now := time.Now()
+	o := Observation{Now: now, StartedAt: now, TotalPods: 3, ReadyPods: 3, Blocked: "experiment x is active"}
+	c := Config{BaselineTimeout: time.Minute}
+	d := Decide(PhaseBaselineCheck, o, c)
+	if d.Next != PhaseBaselineCheck || d.Action != ActionNone {
+		t.Fatalf("should wait: %+v", d)
+	}
+	o.Now = now.Add(2 * time.Minute)
+	if d := Decide(PhaseBaselineCheck, o, c); d.Next != PhaseFailed {
+		t.Fatalf("should fail after timeout: %+v", d)
+	}
+	o.Blocked = ""
+	if d := Decide(PhaseBaselineCheck, Observation{Now: now, StartedAt: now, TotalPods: 3, ReadyPods: 3}, c); d.Next != PhaseInjecting {
+		t.Fatalf("unblocked proceeds: %+v", d)
+	}
+}

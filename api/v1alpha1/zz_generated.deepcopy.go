@@ -167,3 +167,132 @@ func (in *ChaosExperimentStatus) DeepCopyInto(out *ChaosExperimentStatus) {
 		**out = **in
 	}
 }
+
+func (in *ChaosExperimentTemplate) DeepCopyInto(out *ChaosExperimentTemplate) {
+	*out = *in
+	if in.Labels != nil {
+		out.Labels = make(map[string]string, len(in.Labels))
+		for k, v := range in.Labels {
+			out.Labels[k] = v
+		}
+	}
+	in.Spec.DeepCopyInto(&out.Spec)
+}
+
+func (in *ChaosExperimentTemplate) DeepCopy() *ChaosExperimentTemplate {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosExperimentTemplate)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ChaosScheduleSpec) DeepCopyInto(out *ChaosScheduleSpec) {
+	*out = *in
+	if in.StartingDeadlineSeconds != nil {
+		v := *in.StartingDeadlineSeconds
+		out.StartingDeadlineSeconds = &v
+	}
+	if in.SuccessfulRunsHistoryLimit != nil {
+		v := *in.SuccessfulRunsHistoryLimit
+		out.SuccessfulRunsHistoryLimit = &v
+	}
+	if in.FailedRunsHistoryLimit != nil {
+		v := *in.FailedRunsHistoryLimit
+		out.FailedRunsHistoryLimit = &v
+	}
+	in.Template.DeepCopyInto(&out.Template)
+}
+
+func (in *ChaosScheduleSpec) DeepCopy() *ChaosScheduleSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosScheduleSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ChaosScheduleStatus) DeepCopyInto(out *ChaosScheduleStatus) {
+	*out = *in
+	if in.LastScheduleTime != nil {
+		out.LastScheduleTime = in.LastScheduleTime.DeepCopy()
+	}
+	if in.NextScheduleTime != nil {
+		out.NextScheduleTime = in.NextScheduleTime.DeepCopy()
+	}
+	if in.Active != nil {
+		out.Active = append([]string(nil), in.Active...)
+	}
+}
+
+func (in *ChaosScheduleStatus) DeepCopy() *ChaosScheduleStatus {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosScheduleStatus)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ChaosSchedule) DeepCopyInto(out *ChaosSchedule) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
+	in.Spec.DeepCopyInto(&out.Spec)
+	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *ChaosSchedule) DeepCopy() *ChaosSchedule {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosSchedule)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ChaosSchedule) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ChaosScheduleList) DeepCopyInto(out *ChaosScheduleList) {
+	*out = *in
+	out.TypeMeta = in.TypeMeta
+	in.ListMeta.DeepCopyInto(&out.ListMeta)
+	if in.Items != nil {
+		out.Items = make([]ChaosSchedule, len(in.Items))
+		for i := range in.Items {
+			in.Items[i].DeepCopyInto(&out.Items[i])
+		}
+	}
+}
+
+func (in *ChaosScheduleList) DeepCopy() *ChaosScheduleList {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosScheduleList)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *ChaosScheduleList) DeepCopyObject() runtime.Object {
+	if c := in.DeepCopy(); c != nil {
+		return c
+	}
+	return nil
+}
+
+func (in *ChaosExperimentSpec) DeepCopy() *ChaosExperimentSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(ChaosExperimentSpec)
+	in.DeepCopyInto(out)
+	return out
+}

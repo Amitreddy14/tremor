@@ -112,3 +112,32 @@ func ephemeralDone(ctx context.Context, c client.Client, s Spec, name, kind stri
 	}
 	return allDone, nil
 }
+
+// EndTimer is implemented by faults that can tell exactly when they ended, so
+// the recovery clock starts at the real release rather than at the moment the
+// controller noticed it (about a second later).
+type EndTimer interface {
+	// EndedAt returns when the fault stopped acting on its targets and true,
+	// or false when that cannot be told.
+	EndedAt(ctx context.Context, c client.Client, s Spec) (time.Time, bool)
+}
+
+// ephemeralEndedAt is the latest time the named container finished on any
+// target pod. It reports false unless at least one container has finished.
+func ephemeralEndedAt(ctx context.Context, c client.Client, s Spec, name string) (time.Time, bool) {
+	var latest time.Time
+	for _, t := range s.Targets {
+		var pod corev1.Pod
+		if err := c.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: t.Name}, &pod); err != nil || string(pod.UID) != t.UID {
+			continue
+		}
+		st := ephemeralStatus(&pod, name)
+		if st == nil || st.State.Terminated == nil {
+			continue
+		}
+		if f := st.State.Terminated.FinishedAt.Time; f.After(latest) {
+			latest = f
+		}
+	}
+	return latest, !latest.IsZero()
+}

@@ -36,6 +36,9 @@ var httpClient = &http.Client{
 	// A fresh connection per probe so every probe exercises service routing,
 	// as a new user request would.
 	Transport: &http.Transport{DisableKeepAlives: true},
+	// A redirect would send the probe to a host nobody validated, so a 3xx is
+	// taken at face value (and fails unless it is the expected status).
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
 // HTTPProbe issues a GET and passes when the status matches ExpectStatus.

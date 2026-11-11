@@ -1,2 +1,3 @@
 resources:
   - bases/tremor.dev_chaosexperiments.yaml
+  - bases/tremor.dev_chaosschedules.yaml

@@ -1,0 +1,29 @@
+# Kill one shop pod every five minutes, never two runs at once, keeping the
+# last three results of each kind. Suspend it with `spec.suspend: true`.
+apiVersion: tremor.dev/v1alpha1
+kind: ChaosSchedule
+metadata:
+  name: shop-pod-kill-5m
+  namespace: demo
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulRunsHistoryLimit: 3
+  failedRunsHistoryLimit: 3
+  template:
+    labels:
+      suite: nightly
+    spec:
+      target:
+        selector:
+          app: shop
+      fault:
+        type: PodKill
+        params:
+          count: 1
+      steadyState:
+        http:
+          url: http://shop.demo.svc.cluster.local:8080/orders
+          expectStatus: 200
+      recoveryTimeout: 120s
